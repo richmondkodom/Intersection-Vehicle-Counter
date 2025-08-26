@@ -1,13 +1,13 @@
-# 📦 Streamlit App Starter Kit 
+# 🤖 Intersection Vehicle Counter App
 ```
 ⬆️ (Replace above with your app's name)
 ```
 
-Description of the app ...
+This is Intersection Vehicle Counter App
 
 ## Demo App
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://app-starter-kit.streamlit.app/)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://intersection-vehicle-counter.streamlit.app/)
 
 ## GitHub Codespaces
 
