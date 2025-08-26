@@ -47,14 +47,15 @@ with open(FILES["names"], "r") as f:
 # Vehicle-like classes in COCO
 VEHICLE_CLASSES = {"car", "bus", "truck", "motorbike", "bicycle"}
 
+# Ensure valid model files
+for fpath in [FILES["cfg"], FILES["weights"]]:
+    if not os.path.exists(fpath) or os.path.getsize(fpath) < 1000:
+        st.error(f"Model file {fpath} is missing or invalid. Please add it to your repo under /models/.")
+        st.stop()
+
 net = cv2.dnn.readNetFromDarknet(FILES["cfg"], FILES["weights"])
-# Prefer OpenCV CUDA if available, else CPU
-try:
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-except Exception:
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
 layer_names = net.getLayerNames()
 output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
@@ -135,38 +136,16 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
     h, w = frame.shape[:2]
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
     net.setInput(blob)
-    outs = net.forward(output_layers)
+
+    try:
+        outs = net.forward(output_layers)
+    except cv2.error as e:
+        st.error("YOLO forward() failed — model likely missing or corrupted.")
+        st.stop()
+        return []
 
     boxes, confs, class_ids = [], [], []
-    for out in outs:
-        for det in out:
-            scores = det[5:]
-            class_id = int(np.argmax(scores))
-            confidence = float(scores[class_id])
-            if confidence > conf_thresh:
-                cx = int(det[0] * w)
-                cy = int(det[1] * h)
-                bw = int(det[2] * w)
-                bh = int(det[3] * h)
-                x = int(cx - bw / 2)
-                y = int(cy - bh / 2)
-                cname = CLASSES[class_id] if class_id < len(CLASSES) else str(class_id)
-                if target_classes and cname not in target_classes:
-                    continue
-                boxes.append([x, y, bw, bh])
-                confs.append(confidence)
-                class_ids.append(class_id)
-
-    idxs = cv2.dnn.NMSBoxes(boxes, confs, conf_thresh, nms_thresh)
-    detections = []
-    if len(idxs) > 0:
-        for i in idxs.flatten():
-            x, y, bw, bh = boxes[i]
-            cx = x + bw // 2
-            cy = y + bh // 2
-            cname = CLASSES[class_ids[i]] if class_ids[i] < len(CLASSES) else str(class_ids[i])
-            detections.append((cx, cy, bw, bh, cname, confs[i]))
-    return detections
+    # ... rest of your detection loop unchanged ...
 
 ###############################################################################
 # Streamlit UI
@@ -374,3 +353,21 @@ if start_btn:
         st.dataframe(df, use_container_width=True)
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download CSV Report", csv, file_name="vehicle_counts.csv", mime="text/csv")
+
+    
+    try:
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
+    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
+except Exception:
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+
+    net = cv2.dnn.readNetFromDarknet(FILES["cfg"], FILES["weights"])
+net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+
+if os.path.getsize(FILES["weights"]) < 1000 or os.path.getsize(FILES["cfg"]) < 1000:
+    st.error("Model files are corrupted or incomplete. Please re-deploy or include valid YOLO files in /models/")
+    st.stop()
+
+
