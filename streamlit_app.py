@@ -1,5 +1,5 @@
 import streamlit as st
 
-st.title('🎈 App Name')
+st.title('🤖Intersection Vehicle Counter')
 
-st.write('Hello world!')
+st.write('Intersection Vehicle Counnter App')
