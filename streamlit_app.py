@@ -44,7 +44,6 @@ ensure_model_files()
 with open(FILES["names"], "r") as f:
     CLASSES = [c.strip() for c in f.readlines()]
 
-# Vehicle-like classes in COCO
 VEHICLE_CLASSES = {"car", "bus", "truck", "motorbike", "bicycle"}
 
 net = cv2.dnn.readNetFromDarknet(FILES["cfg"], FILES["weights"])
@@ -216,7 +215,7 @@ direction_counts = {
     "down_to_up": 0
 }
 class_totals = defaultdict(int)
-events = []  # raw log
+events = []
 
 if start_btn:
     if source == "Upload Video":
@@ -352,28 +351,55 @@ if start_btn:
 
             workbook  = writer.book
             header_fmt = workbook.add_format({"bold": True, "bg_color": "#DCE6F1", "border": 1, "align": "center"})
-            total_fmt  = workbook.add_format({"bold": True, "bg_color": "#FFE699", "border": 1, "align": "center"})
             cell_fmt   = workbook.add_format({"border": 1})
+            total_fmt  = workbook.add_format({"bold": True, "bg_color": "#FFE699", "border": 1, "align": "center"})
 
+            # --- Unified Grand Summary ---
             summary_ws = workbook.add_worksheet("Grand Summary")
             writer.sheets["Grand Summary"] = summary_ws
 
-            # Direction totals
-            summary_ws.write(0, 0, "Direction Totals", header_fmt)
-            for col, val in enumerate(dir_df.columns):
-                summary_ws.write(1, col, val, header_fmt)
-            for col, val in enumerate(dir_df.iloc[0]):
-                summary_ws.write(2, col, val, cell_fmt)
+            summary_ws.write(0, 0, "Category", header_fmt)
+            summary_ws.write(0, 1, "Count", header_fmt)
 
-            # Class totals
-            start_row = 6
-            summary_ws.write(start_row, 0, "Vehicle Class Totals", header_fmt)
-            for col, val in enumerate(class_df.columns):
-                summary_ws.write(start_row+1, col, val, header_fmt)
-            for col, val in enumerate(class_df.iloc[0]):
-                summary_ws.write(start_row+2, col, val, cell_fmt)
+            row = 1
+            for k, v in direction_counts.items():
+                summary_ws.write(row, 0, k.replace("_", " ").title(), cell_fmt)
+                summary_ws.write(row, 1, v, cell_fmt)
+               
+                            row += 1
 
-            # Chart 1: Vehicles by Class
+            # Add Class counts
+            for k, v in class_totals.items():
+                summary_ws.write(row, 0, k.title(), cell_fmt)
+                summary_ws.write(row, 1, v, cell_fmt)
+                row += 1
+
+            # Add Grand Total
+            grand_total = sum(direction_counts.values())
+            summary_ws.write(row, 0, "Grand Total", total_fmt)
+            summary_ws.write(row, 1, grand_total, total_fmt)
+
+            # Auto-adjust columns
+            summary_ws.set_column(0, 0, 25)
+            summary_ws.set_column(1, 1, 12)
+
+            # --- Highlight Totals in other sheets ---
+            for sheet_name, df_obj in {
+                "Direction Summary": dir_df,
+                "Class Summary": class_df,
+                "Class×Direction Summary": pivot_df,
+            }.items():
+                worksheet = writer.sheets[sheet_name]
+                for idx, col in enumerate(df_obj.columns):
+                    max_len = max(df_obj[col].astype(str).map(len).max(), len(str(col))) + 2
+                    worksheet.set_column(idx, idx, max_len)
+
+                # Highlight "Total" row if present
+                if "Total" in df_obj.index or "Total" in df_obj.values:
+                    last_row = len(df_obj) + 1
+                    worksheet.set_row(last_row, None, total_fmt)
+
+            # --- Charts ---
             chart1 = workbook.add_chart({"type": "column"})
             chart1.add_series({
                 "name": "Vehicles by Class",
@@ -383,20 +409,17 @@ if start_btn:
             chart1.set_title({"name": "Vehicles by Class"})
             chart1.set_style(11)
 
-            # Chart 2: Directions by Class (stacked)
             chart2 = workbook.add_chart({"type": "column", "subtype": "stacked"})
             directions = pivot_df.columns[:-1]
             for i, direction in enumerate(directions):
                 chart2.add_series({
-                    "name":       [ "Class×Direction Summary", 0, i+1 ],
-                    "categories": [ "Class×Direction Summary", 1, 0, len(pivot_df)-2, 0 ],
-                    "values":     [ "Class×Direction Summary", 1, i+1, len(pivot_df)-2, i+1 ],
+                    "name":       ["Class×Direction Summary", 0, i+1],
+                    "categories": ["Class×Direction Summary", 1, 0, len(pivot_df)-2, 0],
+                    "values":     ["Class×Direction Summary", 1, i+1, len(pivot_df)-2, i+1],
                 })
             chart2.set_title({"name": "Directions by Class"})
             chart2.set_style(12)
 
-            # Chart 3:
-                        # Chart 3: Overall Direction Totals
             chart3 = workbook.add_chart({"type": "pie"})
             chart3.add_series({
                 "name": "Direction Totals",
@@ -406,80 +429,10 @@ if start_btn:
             chart3.set_title({"name": "Overall Directions"})
             chart3.set_style(10)
 
-            # Insert charts into summary worksheet
-            summary_ws.insert_chart(10, 0, chart1, {"x_scale": 1.2, "y_scale": 1.2})
-            summary_ws.insert_chart(10, 8, chart2, {"x_scale": 1.2, "y_scale": 1.2})
-            summary_ws.insert_chart(25, 0, chart3, {"x_scale": 1.2, "y_scale": 1.2})
-
-       
-
-        # --- Excel Dashboard Export ---
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name="Raw Events Log")
-            dir_df.to_excel(writer, index=False, sheet_name="Direction Summary")
-            class_df.to_excel(writer, index=False, sheet_name="Class Summary")
-            pivot_df.to_excel(writer, sheet_name="Class×Direction Summary")
-
-            workbook  = writer.book
-            header_fmt = workbook.add_format({"bold": True, "bg_color": "#DCE6F1", "border": 1, "align": "center"})
-            total_fmt  = workbook.add_format({"bold": True, "bg_color": "#FFE699", "border": 1, "align": "center"})
-            cell_fmt   = workbook.add_format({"border": 1})
-
-            summary_ws = workbook.add_worksheet("Grand Summary")
-            writer.sheets["Grand Summary"] = summary_ws
-
-            # Direction totals
-            summary_ws.write(0, 0, "Direction Totals", header_fmt)
-            for col, val in enumerate(dir_df.columns):
-                summary_ws.write(1, col, val, header_fmt)
-            for col, val in enumerate(dir_df.iloc[0]):
-                summary_ws.write(2, col, val, cell_fmt)
-
-            # Class totals
-            start_row = 6
-            summary_ws.write(start_row, 0, "Vehicle Class Totals", header_fmt)
-            for col, val in enumerate(class_df.columns):
-                summary_ws.write(start_row+1, col, val, header_fmt)
-            for col, val in enumerate(class_df.iloc[0]):
-                summary_ws.write(start_row+2, col, val, cell_fmt)
-
-            # Chart 1: Vehicles by Class
-            chart1 = workbook.add_chart({"type": "column"})
-            chart1.add_series({
-                "name": "Vehicles by Class",
-                "categories": f"'Class Summary'!A2:A{len(class_df)+1}",
-                "values":     f"'Class Summary'!B2:B{len(class_df)+1}",
-            })
-            chart1.set_title({"name": "Vehicles by Class"})
-            chart1.set_style(11)
-
-            # Chart 2: Directions by Class (stacked)
-            chart2 = workbook.add_chart({"type": "column", "subtype": "stacked"})
-            directions = pivot_df.columns[:-1]
-            for i, direction in enumerate(directions):
-                chart2.add_series({
-                    "name":       [ "Class×Direction Summary", 0, i+1 ],
-                    "categories": [ "Class×Direction Summary", 1, 0, len(pivot_df)-2, 0 ],
-                    "values":     [ "Class×Direction Summary", 1, i+1, len(pivot_df)-2, i+1 ],
-                })
-            chart2.set_title({"name": "Directions by Class"})
-            chart2.set_style(12)
-
-            # Chart 3: Overall Direction Totals
-            chart3 = workbook.add_chart({"type": "pie"})
-            chart3.add_series({
-                "name": "Direction Totals",
-                "categories": ["Direction Summary", 1, 0, 1, len(dir_df.columns)-1],
-                "values":     ["Direction Summary", 2, 0, 2, len(dir_df.columns)-1],
-            })
-            chart3.set_title({"name": "Overall Directions"})
-            chart3.set_style(10)
-
-            # Insert charts into summary worksheet
-            summary_ws.insert_chart(10, 0, chart1, {"x_scale": 1.2, "y_scale": 1.2})
-            summary_ws.insert_chart(10, 8, chart2, {"x_scale": 1.2, "y_scale": 1.2})
-            summary_ws.insert_chart(25, 0, chart3, {"x_scale": 1.2, "y_scale": 1.2})
+            # Place charts under the unified summary
+            summary_ws.insert_chart(row+3, 0, chart1, {"x_scale": 1.2, "y_scale": 1.2})
+            summary_ws.insert_chart(row+3, 8, chart2, {"x_scale": 1.2, "y_scale": 1.2})
+            summary_ws.insert_chart(row+20, 0, chart3, {"x_scale": 1.2, "y_scale": 1.2})
 
         # Provide download button
         excel_data = output.getvalue()
@@ -489,5 +442,3 @@ if start_btn:
             file_name="vehicle_summary.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-
