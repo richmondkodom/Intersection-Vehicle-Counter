@@ -135,7 +135,7 @@ class CentroidTracker:
 ###############################################################################
 # Vehicle detection
 ###############################################################################
- def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None, input_size=416):
+def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None, input_size=416):
     h, w = frame.shape[:2]
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
     net.setInput(blob)
@@ -167,7 +167,7 @@ class CentroidTracker:
 
     idxs = cv2.dnn.NMSBoxes(boxes, confs, conf_thresh, nms_thresh)
     detections = []
-   if len(idxs) > 0:
+    if len(idxs) > 0:
         for i in idxs.flatten():
             x, y, bw, bh = boxes[i]
             cx = x + bw // 2
@@ -175,8 +175,6 @@ class CentroidTracker:
             cname = CLASSES[class_ids[i]] if class_ids[i] < len(CLASSES) else str(class_ids[i])
             detections.append((cx, cy, bw, bh, cname, confs[i]))
     return detections
-
-
 
 ###############################################################################
 # Streamlit UI
