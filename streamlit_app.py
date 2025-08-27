@@ -209,7 +209,6 @@ with st.sidebar:
 
 uploaded_video = None
 cap = None
-
 if source == "Upload Video":
     uploaded_video = st.file_uploader("Upload a video", type=["mp4", "mov", "avi", "mkv"])
 else:
@@ -217,10 +216,16 @@ else:
 
 start_btn = st.button("▶️ Start")
 
+# -------------------------------
+# Initialize counts
+# -------------------------------
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = defaultdict(int)
 events = []
 
+# -------------------------------
+# Video processing loop
+# -------------------------------
 if start_btn:
     if source == "Upload Video":
         if uploaded_video is None:
@@ -288,7 +293,7 @@ if start_btn:
                         else:
                             direction_counts["down_to_up"] += 1
                         class_totals[cname] += 1
-                        events.append({"frame":frame_idx, "track_id":tid, "class":cname})
+                        events.append({"frame":frame_idx, "track_id":tid, "class":cname, "direction":"horizontal"})
                         tr.counted_crossings["h"] = True
 
                 if use_v and not tr.counted_crossings["v"]:
@@ -298,7 +303,7 @@ if start_btn:
                         else:
                             direction_counts["right_to_left"] += 1
                         class_totals[cname] += 1
-                        events.append({"frame":frame_idx, "track_id":tid, "class":cname})
+                        events.append({"frame":frame_idx, "track_id":tid, "class":cname, "direction":"vertical"})
                         tr.counted_crossings["v"] = True
 
         if fps_display:
