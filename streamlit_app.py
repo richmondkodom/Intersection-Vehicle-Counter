@@ -57,7 +57,6 @@ if net.empty():
 net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
 net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
-
 layer_names = net.getLayerNames()
 try:
     output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
@@ -215,8 +214,8 @@ else:
 start_btn = st.button("▶️ Start")
 
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
-class_totals = defaultdict(int)
-events = set()  # use set to avoid duplicates
+class_totals = {cls: 0 for cls in selected_classes}
+events = []  # store all events
 
 if start_btn:
     if source == "Upload Video":
@@ -272,21 +271,22 @@ if start_btn:
                 label = f"ID {tid} | " + label
             cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
-            # Check crossings (count once per track/line)
+            # Check crossings
             if len(tr.trace) >= 2:
                 px, py = tr.trace[-2]
                 dx = cx - px
                 dy = cy - py
+                event_time = time.strftime("%H:%M:%S", time.localtime())
 
                 # Horizontal line
                 if use_h and not tr.counted_crossings["h"]:
                     if (py < h_line_y <= cy) or (py > h_line_y >= cy):
                         if dy > 0:
                             direction_counts["up_to_down"] += 1
-                            events.add((tid, "up_to_down", tr.cls))
+                            events.append((tid, "up_to_down", tr.cls, frame_idx, event_time))
                         else:
                             direction_counts["down_to_up"] += 1
-                            events.add((tid, "down_to_up", tr.cls))
+                            events.append((tid, "down_to_up", tr.cls, frame_idx, event_time))
                         class_totals[tr.cls] += 1
                         tr.counted_crossings["h"] = True
 
@@ -295,10 +295,10 @@ if start_btn:
                     if (px < v_line_x <= cx) or (px > v_line_x >= cx):
                         if dx > 0:
                             direction_counts["left_to_right"] += 1
-                            events.add((tid, "left_to_right", tr.cls))
+                            events.append((tid, "left_to_right", tr.cls, frame_idx, event_time))
                         else:
                             direction_counts["right_to_left"] += 1
-                            events.add((tid, "right_to_left", tr.cls))
+                            events.append((tid, "right_to_left", tr.cls, frame_idx, event_time))
                         class_totals[tr.cls] += 1
                         tr.counted_crossings["v"] = True
 
@@ -311,7 +311,7 @@ if start_btn:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_holder.image(frame_rgb, channels="RGB")
 
-        # Update stats in place, not duplicate them
+        # Update stats
         stats_col1.metric("Left → Right", direction_counts["left_to_right"])
         stats_col1.metric("Right → Left", direction_counts["right_to_left"])
         stats_col1.metric("Up → Down", direction_counts["up_to_down"])
@@ -319,10 +319,10 @@ if start_btn:
 
         stats_col2.write("### By Vehicle Class")
         if class_totals:
-            stats_col2.table(pd.DataFrame([class_totals]))
+            df_classes = pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"])
+            stats_col2.table(df_classes)
         else:
             stats_col2.info("No vehicles yet.")
-            
 
     cap.release()
     st.success("Finished.")
@@ -330,7 +330,7 @@ if start_btn:
     st.metric("Grand Total", total)
 
     if events:
-        df = pd.DataFrame(list(events), columns=["track_id","direction","class"])
+        df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
         st.dataframe(df, use_container_width=True)
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
