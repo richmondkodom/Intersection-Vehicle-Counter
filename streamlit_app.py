@@ -82,9 +82,6 @@ class CentroidTracker:
         return math.hypot(a[0]-b[0], a[1]-b[1])
 
     def update(self, detections):
-        if detections is None:
-            return {}
-
         now = time.time()
         to_del = [tid for tid, t in self.tracks.items() if (now - t.last_seen) > self.max_age]
         for tid in to_del:
@@ -195,9 +192,6 @@ with st.sidebar:
     show_trace = st.checkbox("Draw motion trails", value=True)
     fps_display = st.checkbox("Show FPS", value=True)
 
-    st.markdown("---")
-    st.caption("Tip: use a 720p clip for best live performance on CPU.")
-
 uploaded_video = None
 cap = None
 
@@ -209,14 +203,11 @@ else:
 start_btn = st.button("▶️ Start")
 
 # Counts
-direction_counts = {
-    "left_to_right": 0,
-    "right_to_left": 0,
-    "up_to_down": 0,
-    "down_to_up": 0
-}
+direction_counts = {"left_to_right": 0, "right_to_left": 0, "up_to_down": 0, "down_to_up": 0}
 class_totals = defaultdict(int)
-events = []  # raw log
+
+# For CSV report
+events = []
 
 if start_btn:
     if source == "Upload Video":
@@ -267,13 +258,12 @@ if start_btn:
 
             if draw_boxes:
                 x = int(cx - bw/2); y = int(cy - bh/2)
-                cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
+                cv2.rectangle(frame, (x, y), (x+bw, y+bh), (0, 255, 0), 2)
 
             label = f"{cname} {int(conf*100)}%"
             if show_ids:
                 label = f"ID {tid} | " + label
-            cv2.putText(frame, label, (int(cx - bw/2), int(max(0, y-8))),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10, 220, 10), 2)
+            cv2.putText(frame, label, (int(cx - bw/2), int(max(0, y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
             if len(tr.trace) >= 2:
                 (px, py) = tr.trace[-2]
@@ -308,7 +298,7 @@ if start_btn:
             now = time.time()
             fps = 1.0 / max(1e-6, (now - fps_time))
             fps_time = now
-            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50, 180, 255), 2)
+            cv2.putText(frame, f"FPS: {fps:.1f}", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50,180,255), 2)
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_holder.image(frame_rgb, channels="RGB")
@@ -318,62 +308,100 @@ if start_btn:
             st.write(pd.DataFrame([direction_counts]))
         with stats_col2:
             st.subheader("By Vehicle Class")
-            st.write(pd.DataFrame([class_totals]) if class_totals else pd.DataFrame([{}]))
+            st.write(pd.DataFrame([class_totals]))
 
         if st.button("⏹ Stop", key=f"stop_{frame_idx}"):
             break
 
     cap.release()
+
     st.success("Finished.")
     total = sum(direction_counts.values())
     st.metric("Grand Total", total)
 
     if events:
         df = pd.DataFrame(events)
-        st.dataframe(df, use_container_width=True)
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download Raw Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
-
-        # --- Summaries ---
         dir_df = pd.DataFrame([direction_counts])
-        class_df = pd.DataFrame([class_totals])
+        class_df = pd.DataFrame(list(class_totals.items()), columns=["class", "count"])
+        class_df["Percentage"] = (class_df["count"] / class_df["count"].sum() * 100).round(2)
         pivot_df = pd.pivot_table(
-            df, values="track_id", index="class", columns="direction",
-            aggfunc="count", fill_value=0, margins=True, margins_name="Total"
+            df,
+            values="track_id",
+            index="class",
+            columns="direction",
+            aggfunc="count",
+            fill_value=0,
+            margins=True,
+            margins_name="Total"
         )
 
-        # --- Excel Dashboard Export ---
+        # Excel export with formatting + charts
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            # Write sheets
             df.to_excel(writer, index=False, sheet_name="Raw Events Log")
             dir_df.to_excel(writer, index=False, sheet_name="Direction Summary")
             class_df.to_excel(writer, index=False, sheet_name="Class Summary")
             pivot_df.to_excel(writer, sheet_name="Class×Direction Summary")
 
-            workbook  = writer.book
+            workbook = writer.book
             header_fmt = workbook.add_format({"bold": True, "bg_color": "#DCE6F1", "border": 1, "align": "center"})
             total_fmt  = workbook.add_format({"bold": True, "bg_color": "#FFE699", "border": 1, "align": "center"})
             cell_fmt   = workbook.add_format({"border": 1})
+            percent_fmt = workbook.add_format({"num_format": "0.00%", "border": 1})
 
+            # Conditional formatting for Class Summary
+            class_ws = writer.sheets["Class Summary"]
+            class_ws.set_row(0, None, header_fmt)
+            class_ws.set_column(0, 2, 15, cell_fmt)
+            class_ws.conditional_format(1, 1, len(class_df), 1, {
+                "type": "3_color_scale",
+                "min_color": "#F8696B",
+                "mid_color": "#FFEB84",
+                "max_color": "#63BE7B"
+            })
+            class_ws.set_column(2, 2, 15, percent_fmt)
+
+            # Conditional formatting for Class×Direction Summary (heatmap excl. totals)
+            pivot_ws = writer.sheets["Class×Direction Summary"]
+            nrows, ncols = pivot_df.shape
+            pivot_ws.set_row(0, None, header_fmt)
+            pivot_ws.set_column(0, ncols, 15, cell_fmt)
+            if nrows >= 2 and ncols >= 2:
+                pivot_ws.conditional_format(1, 1, nrows-2, ncols-2, {
+                    "type": "3_color_scale",
+                    "min_color": "#F8696B",
+                    "mid_color": "#FFEB84",
+                    "max_color": "#63BE7B"
+                })
+                # highlight totals row/col
+                pivot_ws.set_row(nrows-1, None, total_fmt)
+                pivot_ws.set_column(ncols-1, ncols-1, 15, total_fmt)
+
+            # Grand Summary with charts
             summary_ws = workbook.add_worksheet("Grand Summary")
-            writer.sheets["Grand Summary"] = summary_ws
 
-            # Direction totals
+            # --- Direction Totals block ---
             summary_ws.write(0, 0, "Direction Totals", header_fmt)
             for col, val in enumerate(dir_df.columns):
                 summary_ws.write(1, col, val, header_fmt)
-            for col, val in enumerate(dir_df.iloc[0]):
+            for col, val in enumerate(dir_df.iloc[0].tolist()):
                 summary_ws.write(2, col, val, cell_fmt)
 
-            # Class totals
-            start_row = 6
+            # --- Class Totals block ---
+            start_row = 5
             summary_ws.write(start_row, 0, "Vehicle Class Totals", header_fmt)
             for col, val in enumerate(class_df.columns):
                 summary_ws.write(start_row+1, col, val, header_fmt)
-            for col, val in enumerate(class_df.iloc[0]):
-                summary_ws.write(start_row+2, col, val, cell_fmt)
+            for r in range(len(class_df)):
+                for c, v in enumerate(class_df.iloc[r].tolist()):
+                    if c == 2:  # Percentage column
+                        summary_ws.write(start_row+2+r, c, v/100.0, percent_fmt)
+                    else:
+                        summary_ws.write(start_row+2+r, c, v, cell_fmt)
 
-            # Chart 1: Vehicles by Class
+            # --- Charts ---
+            # Chart 1: Vehicles by Class (column)
             chart1 = workbook.add_chart({"type": "column"})
             chart1.add_series({
                 "name": "Vehicles by Class",
@@ -381,18 +409,80 @@ if start_btn:
                 "values":     f"'Class Summary'!B2:B{len(class_df)+1}",
             })
             chart1.set_title({"name": "Vehicles by Class"})
+            chart1.set_x_axis({"name": "Class"})
+            chart1.set_y_axis({"name": "Count"})
             chart1.set_style(11)
 
             # Chart 2: Directions by Class (stacked)
             chart2 = workbook.add_chart({"type": "column", "subtype": "stacked"})
-            directions = pivot_df.columns[:-1]
-            for i, direction in enumerate(directions):
+            directions = list(pivot_df.columns[:-1])  # exclude Total col
+            # Exclude the last row (Total) for categories/values
+            for i in range(len(directions)):
                 chart2.add_series({
-                    "name":       [ "Class×Direction Summary", 0, i+1 ],
-                    "categories": [ "Class×Direction Summary", 1, 0, len(pivot_df)-2, 0 ],
-                    "values":     [ "Class×Direction Summary", 1, i+1, len(pivot_df)-2, i+1 ],
+                    "name":       ["Class×Direction Summary", 0, i+1],
+                    "categories": ["Class×Direction Summary", 1, 0, len(pivot_df)-2, 0],
+                    "values":     ["Class×Direction Summary", 1, i+1, len(pivot_df)-2, i+1],
                 })
             chart2.set_title({"name": "Directions by Class"})
+            chart2.set_x_axis({"name": "Class"})
+            chart2.set_y_axis({"name": "Count"})
             chart2.set_style(12)
 
-            # Chart 3:
+            # Chart 3: Direction Distribution (pie)
+            chart3 = workbook.add_chart({"type": "pie"})
+            chart3.add_series({
+                "name": "Direction Distribution",
+                "categories": f"'Direction Summary'!A1:D1",
+                "values":     f"'Direction Summary'!A2:D2",
+                "data_labels": {"percentage": True}
+            })
+            chart3.set_title({"name": "Direction Distribution"})
+
+            # Chart 4: Class Distribution (pie)
+            chart4 = workbook.add_chart({"type": "pie"})
+            chart4.add_series({
+                "name": "Class Distribution",
+                "categories": f"'Class Summary'!A2:A{len(class_df)+1}",
+                "values":     f"'Class Summary'!C2:C{len(class_df)+1}",
+                "data_labels": {"percentage": True}
+            })
+            chart4.set_title({"name": "Class Distribution"})
+
+            # Insert charts
+            summary_ws.insert_chart(2, 4, chart1, {"x_offset": 20, "y_offset": 10})
+            summary_ws.insert_chart(20, 4, chart2, {"x_offset": 20, "y_offset": 10})
+            summary_ws.insert_chart(2, 9, chart3, {"x_offset": 20, "y_offset": 10})
+            summary_ws.insert_chart(20, 9, chart4, {"x_offset": 20, "y_offset": 10})
+
+        excel_data = output.getvalue()
+        st.download_button(
+            "⬇️ Download All Summaries (Excel Dashboard)",
+            excel_data,
+            file_name="vehicle_summary.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    else:
+        st.info("No crossing events were detected, so there is nothing to export.")
+
+###############################################################################
+# Lightweight Smoke Tests (run locally by setting env RUN_SMOKE_TESTS=1)
+###############################################################################
+def _run_smoke_tests():
+    # 1) detect_vehicles should return a list on a blank frame
+    blank = np.zeros((416, 416, 3), dtype=np.uint8)
+    out = detect_vehicles(blank, conf_thresh=0.9)  # high threshold => almost certainly empty
+    assert isinstance(out, list), "detect_vehicles must return a list"
+
+    # 2) CentroidTracker should create tracks for new detections
+    trk = CentroidTracker(max_distance=50, max_age=2.0)
+    dets = [(100, 100, 40, 20, "car", 0.8), (300, 120, 30, 15, "truck", 0.85)]
+    tracks = trk.update(dets)
+    assert len(tracks) == 2, "Tracker should create two tracks for two detections"
+
+    # 3) Update with nearby detections should keep same IDs
+    dets2 = [(105, 102, 40, 20, "car", 0.82), (295, 118, 30, 15, "truck", 0.83)]
+    tracks2 = trk.update(dets2)
+    assert set(tracks.keys()) == set(tracks2.keys()), "Track IDs should persist across small movements"
+
+if os.environ.get("RUN_SMOKE_TESTS") == "1":
+    _run_smoke_tests()
