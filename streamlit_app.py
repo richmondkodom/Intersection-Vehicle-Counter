@@ -173,7 +173,7 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
 # Streamlit UI
 ###############################################################################
 st.set_page_config(page_title="Vehicle Counter (Streamlit)", layout="wide")
-st.title("🚗 Vehicle Detector & Direction Counter")
+st.title("🚗 Intersection Vehicle Counter")
 
 with st.sidebar:
     st.header("Settings")
