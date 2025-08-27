@@ -354,20 +354,14 @@ if start_btn:
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download CSV Report", csv, file_name="vehicle_counts.csv", mime="text/csv")
 
-    
-    try:
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-except Exception:
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
-    net = cv2.dnn.readNetFromDarknet(FILES["cfg"], FILES["weights"])
+    # Load the YOLOv4-tiny model (CPU only, since Streamlit Cloud has no GPU)
+net = cv2.dnn.readNetFromDarknet(FILES["cfg"], FILES["weights"])
 net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
 net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
-if os.path.getsize(FILES["weights"]) < 1000 or os.path.getsize(FILES["cfg"]) < 1000:
-    st.error("Model files are corrupted or incomplete. Please re-deploy or include valid YOLO files in /models/")
-    st.stop()
+layer_names = net.getLayerNames()
+output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
+
 
 
