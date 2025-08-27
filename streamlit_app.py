@@ -411,13 +411,7 @@ if start_btn:
             summary_ws.insert_chart(10, 8, chart2, {"x_scale": 1.2, "y_scale": 1.2})
             summary_ws.insert_chart(25, 0, chart3, {"x_scale": 1.2, "y_scale": 1.2})
 
-                    excel_data = output.getvalue()
-        st.download_button(
-            "⬇️ Download Excel Dashboard",
-            excel_data,
-            file_name="vehicle_summary.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+       
 
         # --- Excel Dashboard Export ---
         output = io.BytesIO()
