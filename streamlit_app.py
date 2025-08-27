@@ -310,18 +310,25 @@ if start_btn:
             fps_time = now
             cv2.putText(frame, f"FPS: {fps:.1f}", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50,180,255), 2)
 
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_holder.image(frame_rgb, channels="RGB")
 
-        with stats_col1:
-            st.subheader("Direction Counts")
-            st.write(pd.DataFrame([direction_counts]))
-        with stats_col2:
-            st.subheader("By Vehicle Class")
-            st.write(pd.DataFrame([class_totals]) if class_totals else pd.DataFrame([{}]))
+        # Update stats in place, not duplicate them
+        stats_col1.metric("Left → Right", direction_counts["left_to_right"])
+        stats_col1.metric("Right → Left", direction_counts["right_to_left"])
+        stats_col1.metric("Up → Down", direction_counts["up_to_down"])
+        stats_col1.metric("Down → Up", direction_counts["down_to_up"])
 
-        if st.button("⏹ Stop", key=f"stop_{frame_idx}"):
+        stats_col2.write("### By Vehicle Class")
+        if class_totals:
+            stats_col2.table(pd.DataFrame([class_totals]))
+        else:
+            stats_col2.info("No vehicles yet.")
+
+        # Stop button
+        if st.sidebar.button("⏹ Stop"):
             break
+
 
     cap.release()
     st.success("Finished.")
