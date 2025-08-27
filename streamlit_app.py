@@ -324,7 +324,7 @@ if start_btn:
             stats_col2.info("No vehicles yet.")
        # Stop button
        if st.button("⏹ Stop"):
-       break
+        break
       
     cap.release()
     st.success("Finished.")
