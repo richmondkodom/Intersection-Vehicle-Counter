@@ -323,9 +323,7 @@ if start_btn:
         else:
             stats_col2.info("No vehicles yet.")
 
-        # Stop button
-        if st.sidebar.button("⏹ Stop"):
-            break
+      
 
 
     cap.release()
