@@ -214,7 +214,7 @@ else:
 start_btn = st.button("▶️ Start")
 
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
-class_totals = {cls: 0 for cls in selected_classes}
+class_totals = defaultdict(int)
 events = []  # store all events
 
 if start_btn:
