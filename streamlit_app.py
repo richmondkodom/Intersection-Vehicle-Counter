@@ -199,9 +199,6 @@ with st.sidebar:
     show_trace = st.checkbox("Draw motion trails", value=True)
     fps_display = st.checkbox("Show FPS", value=True)
 
-    st.markdown("---")
-    st.caption("Tip: use a 720p clip for best live performance on CPU.")
-
 uploaded_video = None
 cap = None
 
@@ -214,7 +211,7 @@ start_btn = st.button("▶️ Start")
 
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = {cls: 0 for cls in selected_classes}
-events = []  # store all events
+events = []
 
 if start_btn:
     if source == "Upload Video":
@@ -250,11 +247,14 @@ if start_btn:
         use_v = line_mode in ("Horizontal & Vertical", "Vertical only")
 
         dets = detect_vehicles(frame, conf_thresh, nms_thresh, set(selected_classes), input_size)
-        tracks = tracker.update(dets)
 
-        # === Debug overlay: show number of detections YOLO made ===
-        cv2.putText(frame, f"Detections: {len(dets)}", (10,90),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
+        # DEBUG: show detections in Streamlit
+        if dets:
+            st.write([f"{cname} {conf:.2f}" for (_, _, _, _, cname, conf) in dets])
+        else:
+            st.write("No detections in this frame")
+
+        tracks = tracker.update(dets)
 
         if use_h:
             cv2.line(frame, (0, h_line_y), (w, h_line_y), (0, 255, 255), 2)
@@ -274,14 +274,13 @@ if start_btn:
                 label = f"ID {tid} | " + label
             cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
-            # Check crossings
+            # Crossing logic
             if len(tr.trace) >= 2:
                 px, py = tr.trace[-2]
                 dx = cx - px
                 dy = cy - py
                 event_time = time.strftime("%H:%M:%S", time.localtime())
 
-                # Horizontal line
                 if use_h and not tr.counted_crossings["h"]:
                     if (py < h_line_y <= cy) or (py > h_line_y >= cy):
                         if dy > 0:
@@ -293,7 +292,6 @@ if start_btn:
                         class_totals[tr.cls] += 1
                         tr.counted_crossings["h"] = True
 
-                # Vertical line
                 if use_v and not tr.counted_crossings["v"]:
                     if (px < v_line_x <= cx) or (px > v_line_x >= cx):
                         if dx > 0:
@@ -314,30 +312,16 @@ if start_btn:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_holder.image(frame_rgb, channels="RGB")
 
-        # Update stats (filter zeros)
-        stats_col1.write("### Directions")
-        df_dir = pd.DataFrame(
-            [(k, v) for k, v in direction_counts.items() if v > 0],
-            columns=["Direction", "Count"]
-        )
-        if not df_dir.empty:
-            stats_col1.dataframe(df_dir, use_container_width=True)
-        else:
-            stats_col1.info("No crossings yet.")
+        # Update stats
+        stats_col1.metric("Left → Right", direction_counts["left_to_right"])
+        stats_col1.metric("Right → Left", direction_counts["right_to_left"])
+        stats_col1.metric("Up → Down", direction_counts["up_to_down"])
+        stats_col1.metric("Down → Up", direction_counts["down_to_up"])
 
         stats_col2.write("### By Vehicle Class")
         if class_totals:
-            df_classes = (
-                pd.DataFrame.from_dict(class_totals, orient="index", columns=["Count"])
-                .reset_index()
-                .rename(columns={"index": "Class"})
-            )
-            df_classes = df_classes[df_classes["Count"] > 0]
-            if not df_classes.empty:
-                df_classes = df_classes.sort_values(by="Count", ascending=False)
-                stats_col2.dataframe(df_classes, use_container_width=True)
-            else:
-                stats_col2.info("No vehicles counted yet.")
+            df_classes = pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"])
+            stats_col2.table(df_classes)
         else:
             stats_col2.info("No vehicles yet.")
 
