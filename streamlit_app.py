@@ -167,14 +167,29 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
 
     idxs = cv2.dnn.NMSBoxes(boxes, confs, conf_thresh, nms_thresh)
     detections = []
-    if len(idxs) > 0:
-        for i in idxs.flatten():
-            x, y, bw, bh = boxes[i]
-            cx = x + bw // 2
-            cy = y + bh // 2
-            cname = CLASSES[class_ids[i]] if class_ids[i] < len(CLASSES) else str(class_ids[i])
-            detections.append((cx, cy, bw, bh, cname, confs[i]))
-    return detections
+   if len(tr.trace) >= 2:
+    (px, py) = tr.trace[-2]
+    dx = cx - px
+    dy = cy - py
+
+    # Horizontal line
+    if use_h and not tr.counted_crossings["h"]:
+        if (py < h_line_y <= cy) or (py > h_line_y >= cy):
+            direction = "up_to_down" if dy > 0 else "down_to_up"
+            direction_counts[direction] += 1
+            class_totals[cname] = max(class_totals.get(cname, 0), 0) + 1
+            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": direction})
+            tr.counted_crossings["h"] = True
+
+    # Vertical line
+    if use_v and not tr.counted_crossings["v"]:
+        if (px < v_line_x <= cx) or (px > v_line_x >= cx):
+            direction = "left_to_right" if dx > 0 else "right_to_left"
+            direction_counts[direction] += 1
+            class_totals[cname] = max(class_totals.get(cname, 0), 0) + 1
+            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": direction})
+            tr.counted_crossings["v"] = True
+
 
 ###############################################################################
 # Streamlit UI
