@@ -63,78 +63,29 @@ output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatt
 ###############################################################################
 # Simple Centroid Tracker
 ###############################################################################
-class Track:
-    def __init__(self, track_id, centroid):
-        self.id = track_id
-        self.trace = deque(maxlen=20)  # recent centroids
-        self.trace.append(centroid)
-        self.counted_crossings = {"h": False, "v": False}  # horizontal/vertical line crossings
-        self.cls = None
-        self.last_seen = time.time()
-
-class CentroidTracker:
-    def __init__(self, max_distance=50, max_age=2.0):
-        self.next_id = 1
-        self.tracks = {}  # id -> Track
-        self.max_distance = max_distance
-        self.max_age = max_age
-
-    @staticmethod
-    def _euclidean(a, b):
-        return math.hypot(a[0]-b[0], a[1]-b[1])
+    class CentroidTracker:
+    def __init__(self, max_lost=10):
+        self.next_object_id = 0
+        self.objects = {}
+        self.lost = {}
+        self.max_lost = max_lost
 
     def update(self, detections):
-        """
-        detections: list of (cx, cy, w, h, cls_name, conf)
-        Returns: dict track_id -> (cx, cy, w, h, cls_name, conf)
-        """
-        now = time.time()
-        # Remove stale tracks
-        to_del = [tid for tid, t in self.tracks.items() if (now - t.last_seen) > self.max_age]
-        for tid in to_del:
-            del self.tracks[tid]
+        if detections is None:   # ✅ Guard against None
+            detections = []
+        if len(detections) == 0:
+            # Mark all current objects as lost
+            for obj_id in list(self.lost.keys()):
+                self.lost[obj_id] += 1
+                if self.lost[obj_id] > self.max_lost:
+                    self.objects.pop(obj_id, None)
+                    self.lost.pop(obj_id, None)
+            return self.objects
 
-        assigned = set()
-        out = {}
+        # ... your existing matching/tracking logic continues here ...
 
-        # Greedy matching by nearest distance
-        for det in detections:
-            dcx, dcy, w, h, cname, conf = det
-            best_id, best_dist = None, 1e9
-            for tid, tr in self.tracks.items():
-                if tid in assigned: 
-                    continue
-                dist = self._euclidean((dcx, dcy), tr.trace[-1])
-                if dist < best_dist:
-                    best_dist = dist
-                    best_id = tid
-            if best_id is not None and best_dist <= self.max_distance:
-                tr = self.tracks[best_id]
-                tr.trace.append((dcx, dcy))
-                tr.last_seen = now
-                if tr.cls is None:
-                    tr.cls = cname
-                assigned.add(best_id)
-                out[best_id] = (dcx, dcy, w, h, tr.cls or cname, conf)
-            else:
-                # new track
-                tid = self.next_id
-                self.next_id += 1
-                tr = Track(tid, (dcx, dcy))
-                tr.cls = cname
-                tr.last_seen = now
-                self.tracks[tid] = tr
-                assigned.add(tid)
-                out[tid] = (dcx, dcy, w, h, cname, conf)
-
-        return out
-
-       def update(self, detections):
-    if detections is None:   # ✅ prevent crash
-        detections = []
-    ...
-
-
+               
+   
 ###############################################################################
 # Detection function
 ###############################################################################
