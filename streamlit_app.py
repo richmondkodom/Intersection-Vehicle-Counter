@@ -337,8 +337,7 @@ if len(tr.trace) >= 2:
             st.subheader("By Vehicle Class")
             st.write(pd.DataFrame([class_totals]) if class_totals else pd.DataFrame([{}]))
 
-        if st.button("⏹ Stop", key=f"stop_{frame_idx}"):
-            break
+        
 
     cap.release()
     st.success("Finished.")
