@@ -180,7 +180,7 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
 # Streamlit UI
 ###############################################################################
 st.set_page_config(page_title="Vehicle Counter", layout="wide")
-st.title("🚗 Intersection Vehicle Counter")
+st.title("🚗 Vehicle Detector & Direction Counter")
 
 with st.sidebar:
     st.header("Settings")
@@ -209,6 +209,7 @@ with st.sidebar:
 
 uploaded_video = None
 cap = None
+
 if source == "Upload Video":
     uploaded_video = st.file_uploader("Upload a video", type=["mp4", "mov", "avi", "mkv"])
 else:
@@ -216,16 +217,10 @@ else:
 
 start_btn = st.button("▶️ Start")
 
-# -------------------------------
-# Initialize counts
-# -------------------------------
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = defaultdict(int)
 events = []
 
-# -------------------------------
-# Video processing loop
-# -------------------------------
 if start_btn:
     if source == "Upload Video":
         if uploaded_video is None:
@@ -280,46 +275,31 @@ if start_btn:
                 label = f"ID {tid} | " + label
             cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
-           # Check crossings
-if len(tr.trace) >= 2:
-    px, py = tr.trace[-2]
-    dx = cx - px
-    dy = cy - py
+            # Check crossings
+            if len(tr.trace) >= 2:
+                px, py = tr.trace[-2]
+                dx = cx - px
+                dy = cy - py
 
-    # Horizontal crossing
-    if use_h and not tr.counted_crossings["h"]:
-        if (py < h_line_y <= cy) or (py > h_line_y >= cy):
-            if dy > 0:
-                direction_counts["up_to_down"] += 1
-            else:
-                direction_counts["down_to_up"] += 1
-            class_totals[tr.cls] += 1
-            events.append({
-                "frame": frame_idx,
-                "track_id": tid,
-                "class": tr.cls,
-                "direction": "horizontal"
-            })
-            tr.counted_crossings["h"] = True
+                if use_h and not tr.counted_crossings["h"]:
+                    if (py < h_line_y <= cy) or (py > h_line_y >= cy):
+                        if dy > 0:
+                            direction_counts["up_to_down"] += 1
+                        else:
+                            direction_counts["down_to_up"] += 1
+                        class_totals[cname] += 1
+                        events.append({"frame":frame_idx, "track_id":tid, "class":cname})
+                        tr.counted_crossings["h"] = True
 
-    # Vertical crossing
-    if use_v and not tr.counted_crossings["v"]:
-        if (px < v_line_x <= cx) or (px > v_line_x >= cx):
-            if dx > 0:
-                direction_counts["left_to_right"] += 1
-            else:
-                direction_counts["right_to_left"] += 1
-            # Count only once per vehicle
-            if not tr.counted_crossings["v"]:
-                class_totals[tr.cls] += 1
-            events.append({
-                "frame": frame_idx,
-                "track_id": tid,
-                "class": tr.cls,
-                "direction": "vertical"
-            })
-            tr.counted_crossings["v"] = True
-
+                if use_v and not tr.counted_crossings["v"]:
+                    if (px < v_line_x <= cx) or (px > v_line_x >= cx):
+                        if dx > 0:
+                            direction_counts["left_to_right"] += 1
+                        else:
+                            direction_counts["right_to_left"] += 1
+                        class_totals[cname] += 1
+                        events.append({"frame":frame_idx, "track_id":tid, "class":cname})
+                        tr.counted_crossings["v"] = True
 
         if fps_display:
             now = time.time()
@@ -337,7 +317,8 @@ if len(tr.trace) >= 2:
             st.subheader("By Vehicle Class")
             st.write(pd.DataFrame([class_totals]) if class_totals else pd.DataFrame([{}]))
 
-        
+        if st.button("⏹ Stop", key=f"stop_{frame_idx}"):
+            break
 
     cap.release()
     st.success("Finished.")
