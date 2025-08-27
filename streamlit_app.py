@@ -215,7 +215,7 @@ start_btn = st.button("▶️ Start")
 
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = {cls: 0 for cls in selected_classes}
-events = []
+events = []  # store all events
 
 if start_btn:
     if source == "Upload Video":
@@ -271,12 +271,14 @@ if start_btn:
                 label = f"ID {tid} | " + label
             cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
+            # Check crossings
             if len(tr.trace) >= 2:
                 px, py = tr.trace[-2]
                 dx = cx - px
                 dy = cy - py
                 event_time = time.strftime("%H:%M:%S", time.localtime())
 
+                # Horizontal line
                 if use_h and not tr.counted_crossings["h"]:
                     if (py < h_line_y <= cy) or (py > h_line_y >= cy):
                         if dy > 0:
@@ -285,9 +287,10 @@ if start_btn:
                         else:
                             direction_counts["down_to_up"] += 1
                             events.append((tid, "down_to_up", tr.cls, frame_idx, event_time))
-                        class_totals[tr.cls] += 1
+                        class_totals[tr.cls] = class_totals.get(tr.cls, 0) + 1
                         tr.counted_crossings["h"] = True
 
+                # Vertical line
                 if use_v and not tr.counted_crossings["v"]:
                     if (px < v_line_x <= cx) or (px > v_line_x >= cx):
                         if dx > 0:
@@ -296,7 +299,7 @@ if start_btn:
                         else:
                             direction_counts["right_to_left"] += 1
                             events.append((tid, "right_to_left", tr.cls, frame_idx, event_time))
-                        class_totals[tr.cls] += 1
+                        class_totals[tr.cls] = class_totals.get(tr.cls, 0) + 1
                         tr.counted_crossings["v"] = True
 
         if fps_display:
@@ -308,30 +311,66 @@ if start_btn:
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_holder.image(frame_rgb, channels="RGB")
 
-        stats_col1.metric("Left → Right", direction_counts["left_to_right"])
-        stats_col1.metric("Right → Left", direction_counts["right_to_left"])
-        stats_col1.metric("Up → Down", direction_counts["up_to_down"])
-        stats_col1.metric("Down → Up", direction_counts["down_to_up"])
+        # Update stats live (only show non-zero)
+        stats_col1.write("### Directions")
+        df_dir = pd.DataFrame(
+            [(k, v) for k, v in direction_counts.items() if v > 0],
+            columns=["Direction", "Count"]
+        )
+        if not df_dir.empty:
+            stats_col1.dataframe(df_dir, use_container_width=True)
+        else:
+            stats_col1.info("No crossings yet.")
 
         stats_col2.write("### By Vehicle Class")
-        if class_totals:
-            df_classes = (
-                pd.DataFrame.from_dict(class_totals, orient="index", columns=["Count"])
-                .reset_index()
-                .rename(columns={"index": "Class"})
-                .sort_values(by="Count", ascending=False)
-            )
+        df_classes = (
+            pd.DataFrame.from_dict(class_totals, orient="index", columns=["Count"])
+            .reset_index()
+            .rename(columns={"index": "Class"})
+        )
+        df_classes = df_classes[df_classes["Count"] > 0]
+        if not df_classes.empty:
+            df_classes = df_classes.sort_values(by="Count", ascending=False)
             stats_col2.dataframe(df_classes, use_container_width=True)
         else:
             stats_col2.info("No vehicles yet.")
 
     cap.release()
     st.success("Finished.")
+
+    # Grand Total
     total = sum(direction_counts.values())
     st.metric("Grand Total", total)
 
+    # Final directions table (filter zeros)
+    st.write("### Final Direction Counts")
+    df_final_dir = pd.DataFrame(
+        [(k, v) for k, v in direction_counts.items() if v > 0],
+        columns=["Direction", "Count"]
+    )
+    if not df_final_dir.empty:
+        st.table(df_final_dir)
+    else:
+        st.info("No crossings detected.")
+
+    # Final class totals (filter zeros)
+    st.write("### Final Vehicle Class Counts")
+    df_final_classes = (
+        pd.DataFrame.from_dict(class_totals, orient="index", columns=["Count"])
+        .reset_index()
+        .rename(columns={"index": "Class"})
+    )
+    df_final_classes = df_final_classes[df_final_classes["Count"] > 0]
+    if not df_final_classes.empty:
+        df_final_classes = df_final_classes.sort_values(by="Count", ascending=False)
+        st.table(df_final_classes)
+    else:
+        st.info("No vehicles detected.")
+
+    # Event log CSV (only real crossings)
     if events:
         df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
+        st.write("### Event Log")
         st.dataframe(df, use_container_width=True)
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
