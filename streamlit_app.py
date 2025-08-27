@@ -45,9 +45,6 @@ with open(FILES["names"], "r") as f:
 
 VEHICLE_CLASSES = {"car", "bus", "truck", "motorbike", "bicycle"}
 
-# 🔎 Debug: confirm classes
-st.write("Loaded classes:", CLASSES[:15])
-
 ###############################################################################
 # Load YOLO network
 ###############################################################################
@@ -179,16 +176,32 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
 # Streamlit UI
 ###############################################################################
 st.set_page_config(page_title="Vehicle Counter", layout="wide")
-st.title("🚗 Intersection Vehicle Counter (Debug Mode)")
+st.title("🚗 Intersection Vehicle Counter")
 
 with st.sidebar:
     st.header("Settings")
     source = st.radio("Source", ["Upload Video", "Webcam"], index=0)
-    conf_thresh = st.slider("Detection confidence", 0.1, 0.9, 0.25, 0.05)
+    conf_thresh = st.slider("Detection confidence", 0.1, 0.9, 0.20, 0.05)  # lowered default
     nms_thresh = st.slider("NMS threshold", 0.1, 0.9, 0.45, 0.05)
     input_size = st.select_slider("Model input size", options=[320, 416, 512, 608], value=416)
+    max_distance = st.slider("Tracker max match distance (px)", 10, 150, 60, 5)
+    max_age = st.slider("Tracker max age (sec)", 1.0, 5.0, 2.0, 0.5)
 
-    st.markdown("⚠️ Debug mode: detects ALL classes, not just vehicles.")
+    st.markdown("**Count Lines**")
+    line_mode = st.selectbox("Which lines to use for counting?", ["Horizontal & Vertical", "Horizontal only", "Vertical only"], index=0)
+    h_ratio = st.slider("Horizontal line position (height ratio)", 0.1, 0.9, 0.5, 0.05)
+    v_ratio = st.slider("Vertical line position (width ratio)", 0.1, 0.9, 0.5, 0.05)
+
+    st.markdown("**Classes**")
+    selected_classes = st.multiselect("Vehicle classes to detect", sorted(list(VEHICLE_CLASSES)), default=list(VEHICLE_CLASSES))
+
+    draw_boxes = st.checkbox("Draw boxes", value=True)
+    show_ids = st.checkbox("Show track IDs", value=True)
+    show_trace = st.checkbox("Draw motion trails", value=True)
+    fps_display = st.checkbox("Show FPS", value=True)
+
+    st.markdown("---")
+    st.caption("Tip: use a 720p clip for best live performance on CPU.")
 
 uploaded_video = None
 cap = None
@@ -199,6 +212,10 @@ else:
     cam_index = st.number_input("Webcam index", value=0, step=1, min_value=0)
 
 start_btn = st.button("▶️ Start")
+
+direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
+class_totals = {cls: 0 for cls in selected_classes}
+events = []  # store all events
 
 if start_btn:
     if source == "Upload Video":
@@ -215,7 +232,10 @@ if start_btn:
         st.error("Could not open video source.")
         st.stop()
 
+    tracker = CentroidTracker(max_distance=max_distance, max_age=max_age)
     frame_holder = st.empty()
+    stats_col1, stats_col2 = st.columns(2)
+    fps_time = time.time()
     frame_idx = 0
 
     while True:
@@ -223,18 +243,95 @@ if start_btn:
         if not ret:
             break
         frame_idx += 1
+        h, w = frame.shape[:2]
 
-        # detect ALL classes (not filtering)
-        dets = detect_vehicles(frame, conf_thresh, nms_thresh, None, input_size)
+        h_line_y = int(h * h_ratio)
+        v_line_x = int(w * v_ratio)
+        use_h = line_mode in ("Horizontal & Vertical", "Horizontal only")
+        use_v = line_mode in ("Horizontal & Vertical", "Vertical only")
 
-        # 🔎 Debug: show raw detections
-        if dets:
-            st.write([f"{cname} {conf:.2f}" for (_, _, _, _, cname, conf) in dets])
-        else:
-            st.write(f"Frame {frame_idx}: No detections")
+        # filter only selected vehicle classes
+        dets = detect_vehicles(frame, conf_thresh, nms_thresh, set(selected_classes), input_size)
+        tracks = tracker.update(dets)
+
+        if use_h:
+            cv2.line(frame, (0, h_line_y), (w, h_line_y), (0, 255, 255), 2)
+        if use_v:
+            cv2.line(frame, (v_line_x, 0), (v_line_x, h), (255, 255, 0), 2)
+
+        for tid, (cx, cy, bw, bh, cname, conf) in tracks.items():
+            tr = tracker.tracks[tid]
+            if show_trace and len(tr.trace) >= 2:
+                for i in range(1, len(tr.trace)):
+                    cv2.line(frame, tr.trace[i-1], tr.trace[i], (200,200,200), 2)
+            if draw_boxes:
+                x = int(cx - bw/2); y = int(cy - bh/2)
+                cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0,255,0), 2)
+            label = f"{cname} {int(conf*100)}%"
+            if show_ids:
+                label = f"ID {tid} | " + label
+            cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
+
+            # Check crossings
+            if len(tr.trace) >= 2:
+                px, py = tr.trace[-2]
+                dx = cx - px
+                dy = cy - py
+                event_time = time.strftime("%H:%M:%S", time.localtime())
+
+                # Horizontal line
+                if use_h and not tr.counted_crossings["h"]:
+                    if (py < h_line_y <= cy) or (py > h_line_y >= cy):
+                        if dy > 0:
+                            direction_counts["up_to_down"] += 1
+                            events.append((tid, "up_to_down", tr.cls, frame_idx, event_time))
+                        else:
+                            direction_counts["down_to_up"] += 1
+                            events.append((tid, "down_to_up", tr.cls, frame_idx, event_time))
+                        class_totals[tr.cls] += 1
+                        tr.counted_crossings["h"] = True
+
+                # Vertical line
+                if use_v and not tr.counted_crossings["v"]:
+                    if (px < v_line_x <= cx) or (px > v_line_x >= cx):
+                        if dx > 0:
+                            direction_counts["left_to_right"] += 1
+                            events.append((tid, "left_to_right", tr.cls, frame_idx, event_time))
+                        else:
+                            direction_counts["right_to_left"] += 1
+                            events.append((tid, "right_to_left", tr.cls, frame_idx, event_time))
+                        class_totals[tr.cls] += 1
+                        tr.counted_crossings["v"] = True
+
+        if fps_display:
+            now = time.time()
+            fps = 1.0 / max(1e-6, now - fps_time)
+            fps_time = now
+            cv2.putText(frame, f"FPS: {fps:.1f}", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50,180,255), 2)
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_holder.image(frame_rgb, channels="RGB")
 
+        # Update stats
+        stats_col1.metric("Left → Right", direction_counts["left_to_right"])
+        stats_col1.metric("Right → Left", direction_counts["right_to_left"])
+        stats_col1.metric("Up → Down", direction_counts["up_to_down"])
+        stats_col1.metric("Down → Up", direction_counts["down_to_up"])
+
+        stats_col2.write("### By Vehicle Class")
+        if class_totals:
+            df_classes = pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"])
+            stats_col2.table(df_classes)
+        else:
+            stats_col2.info("No vehicles yet.")
+
     cap.release()
     st.success("Finished.")
+    total = sum(direction_counts.values())
+    st.metric("Grand Total", total)
+
+    if events:
+        df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
+        st.dataframe(df, use_container_width=True)
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Download Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
