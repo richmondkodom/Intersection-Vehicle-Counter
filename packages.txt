@@ -1,1 +1,3 @@
+RUN_SMOKE_TESTS=1 python app.py
+streamlit run app.py
 
