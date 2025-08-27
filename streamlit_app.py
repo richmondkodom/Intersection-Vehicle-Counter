@@ -53,7 +53,6 @@ if net.empty():
     st.error("Failed to load YOLOv4-tiny network. Check weights/cfg files.")
     st.stop()
 
-# Force CPU backend
 net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
 net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
@@ -131,7 +130,7 @@ class CentroidTracker:
 ###############################################################################
 # Vehicle detection
 ###############################################################################
-def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None, input_size=416):
+def detect_vehicles(frame, conf_thresh=0.2, nms_thresh=0.4, target_classes=None, input_size=416):
     h, w = frame.shape[:2]
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
     net.setInput(blob)
@@ -181,7 +180,7 @@ st.title("🚗 Intersection Vehicle Counter")
 with st.sidebar:
     st.header("Settings")
     source = st.radio("Source", ["Upload Video", "Webcam"], index=0)
-    conf_thresh = st.slider("Detection confidence", 0.1, 0.9, 0.35, 0.05)
+    conf_thresh = st.slider("Detection confidence", 0.1, 0.9, 0.20, 0.05)
     nms_thresh = st.slider("NMS threshold", 0.1, 0.9, 0.45, 0.05)
     input_size = st.select_slider("Model input size", options=[320, 416, 512, 608], value=416)
     max_distance = st.slider("Tracker max match distance (px)", 10, 150, 60, 5)
@@ -200,6 +199,9 @@ with st.sidebar:
     show_trace = st.checkbox("Draw motion trails", value=True)
     fps_display = st.checkbox("Show FPS", value=True)
 
+    st.markdown("---")
+    st.caption("Tip: use a 720p clip for best live performance on CPU.")
+
 uploaded_video = None
 cap = None
 
@@ -212,7 +214,7 @@ start_btn = st.button("▶️ Start")
 
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = {cls: 0 for cls in selected_classes}
-events = []
+events = []  # store all events
 
 if start_btn:
     if source == "Upload Video":
@@ -231,7 +233,6 @@ if start_btn:
 
     tracker = CentroidTracker(max_distance=max_distance, max_age=max_age)
     frame_holder = st.empty()
-    stats_col1, stats_col2 = st.columns(2)
     fps_time = time.time()
     frame_idx = 0
 
@@ -266,10 +267,9 @@ if start_btn:
             label = f"{cname} {int(conf*100)}%"
             if show_ids:
                 label = f"ID {tid} | " + label
-            cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
+            cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
-            # Count crossings
+            # Check crossings
             if len(tr.trace) >= 2:
                 px, py = tr.trace[-2]
                 dx = cx - px
@@ -284,7 +284,8 @@ if start_btn:
                         else:
                             direction_counts["down_to_up"] += 1
                             events.append((tid, "down_to_up", tr.cls, frame_idx, event_time))
-                        class_totals[tr.cls] += 1
+                        if tr.cls in class_totals:
+                            class_totals[tr.cls] += 1
                         tr.counted_crossings["h"] = True
 
                 if use_v and not tr.counted_crossings["v"]:
@@ -295,39 +296,37 @@ if start_btn:
                         else:
                             direction_counts["right_to_left"] += 1
                             events.append((tid, "right_to_left", tr.cls, frame_idx, event_time))
-                        class_totals[tr.cls] += 1
+                        if tr.cls in class_totals:
+                            class_totals[tr.cls] += 1
                         tr.counted_crossings["v"] = True
 
         # === Overlay totals on video ===
-        overlay_text = " | ".join([f"{cls.capitalize()}: {cnt}" for cls, cnt in class_totals.items()])
-        total_text = f"Total: {sum(class_totals.values())}"
-        y0 = 50
-        for i, line in enumerate([overlay_text, total_text]):
+        overlay_lines = []
+        overlay_lines.append(" | ".join([f"{cls.capitalize()}: {cnt}" for cls, cnt in class_totals.items()]))
+        overlay_lines.append(f"Total: {sum(class_totals.values())}")
+        overlay_lines.append(
+            f"L→R: {direction_counts['left_to_right']} | R→L: {direction_counts['right_to_left']}"
+        )
+        overlay_lines.append(
+            f"U→D: {direction_counts['up_to_down']} | D→U: {direction_counts['down_to_up']}"
+        )
+
+        y0 = 40
+        for i, line in enumerate(overlay_lines):
             y = y0 + i * 25
-            cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(frame, line, (10, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                        (255, 255, 255), 2, cv2.LINE_AA)
 
         if fps_display:
             now = time.time()
             fps = 1.0 / max(1e-6, now - fps_time)
             fps_time = now
-            cv2.putText(frame, f"FPS: {fps:.1f}", (10,30),
+            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50,180,255), 2)
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_holder.image(frame_rgb, channels="RGB")
-
-        stats_col1.metric("Left → Right", direction_counts["left_to_right"])
-        stats_col1.metric("Right → Left", direction_counts["right_to_left"])
-        stats_col1.metric("Up → Down", direction_counts["up_to_down"])
-        stats_col1.metric("Down → Up", direction_counts["down_to_up"])
-
-        stats_col2.write("### By Vehicle Class")
-        if class_totals:
-            df_classes = pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"])
-            stats_col2.table(df_classes)
-        else:
-            stats_col2.info("No vehicles yet.")
 
     cap.release()
     st.success("Finished.")
