@@ -7,7 +7,6 @@ import tempfile
 import numpy as np
 import streamlit as st
 import pandas as pd
-import io
 from collections import deque, defaultdict
 
 ###############################################################################
@@ -219,7 +218,7 @@ start_btn = st.button("▶️ Start")
 
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = defaultdict(int)
-events = []
+events = set()  # use set to avoid duplicates
 
 if start_btn:
     if source == "Upload Video":
@@ -275,30 +274,34 @@ if start_btn:
                 label = f"ID {tid} | " + label
             cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
-            # Check crossings
+            # Check crossings (count once per track/line)
             if len(tr.trace) >= 2:
                 px, py = tr.trace[-2]
                 dx = cx - px
                 dy = cy - py
 
+                # Horizontal line
                 if use_h and not tr.counted_crossings["h"]:
                     if (py < h_line_y <= cy) or (py > h_line_y >= cy):
                         if dy > 0:
                             direction_counts["up_to_down"] += 1
+                            events.add((tid, "up_to_down", tr.cls))
                         else:
                             direction_counts["down_to_up"] += 1
-                        class_totals[cname] += 1
-                        events.append({"frame":frame_idx, "track_id":tid, "class":cname})
+                            events.add((tid, "down_to_up", tr.cls))
+                        class_totals[tr.cls] += 1
                         tr.counted_crossings["h"] = True
 
+                # Vertical line
                 if use_v and not tr.counted_crossings["v"]:
                     if (px < v_line_x <= cx) or (px > v_line_x >= cx):
                         if dx > 0:
                             direction_counts["left_to_right"] += 1
+                            events.add((tid, "left_to_right", tr.cls))
                         else:
                             direction_counts["right_to_left"] += 1
-                        class_totals[cname] += 1
-                        events.append({"frame":frame_idx, "track_id":tid, "class":cname})
+                            events.add((tid, "right_to_left", tr.cls))
+                        class_totals[tr.cls] += 1
                         tr.counted_crossings["v"] = True
 
         if fps_display:
@@ -326,7 +329,7 @@ if start_btn:
     st.metric("Grand Total", total)
 
     if events:
-        df = pd.DataFrame(events)
+        df = pd.DataFrame(list(events), columns=["track_id","direction","class"])
         st.dataframe(df, use_container_width=True)
         csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download Raw Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
+        st.download_button("⬇️ Download Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
