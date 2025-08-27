@@ -275,31 +275,46 @@ if start_btn:
                 label = f"ID {tid} | " + label
             cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
-            # Check crossings
-            if len(tr.trace) >= 2:
-                px, py = tr.trace[-2]
-                dx = cx - px
-                dy = cy - py
+           # Check crossings
+if len(tr.trace) >= 2:
+    px, py = tr.trace[-2]
+    dx = cx - px
+    dy = cy - py
 
-                if use_h and not tr.counted_crossings["h"]:
-                    if (py < h_line_y <= cy) or (py > h_line_y >= cy):
-                        if dy > 0:
-                            direction_counts["up_to_down"] += 1
-                        else:
-                            direction_counts["down_to_up"] += 1
-                        class_totals[cname] += 1
-                        events.append({"frame":frame_idx, "track_id":tid, "class":cname})
-                        tr.counted_crossings["h"] = True
+    # Horizontal crossing
+    if use_h and not tr.counted_crossings["h"]:
+        if (py < h_line_y <= cy) or (py > h_line_y >= cy):
+            if dy > 0:
+                direction_counts["up_to_down"] += 1
+            else:
+                direction_counts["down_to_up"] += 1
+            class_totals[tr.cls] += 1
+            events.append({
+                "frame": frame_idx,
+                "track_id": tid,
+                "class": tr.cls,
+                "direction": "horizontal"
+            })
+            tr.counted_crossings["h"] = True
 
-                if use_v and not tr.counted_crossings["v"]:
-                    if (px < v_line_x <= cx) or (px > v_line_x >= cx):
-                        if dx > 0:
-                            direction_counts["left_to_right"] += 1
-                        else:
-                            direction_counts["right_to_left"] += 1
-                        class_totals[cname] += 1
-                        events.append({"frame":frame_idx, "track_id":tid, "class":cname})
-                        tr.counted_crossings["v"] = True
+    # Vertical crossing
+    if use_v and not tr.counted_crossings["v"]:
+        if (px < v_line_x <= cx) or (px > v_line_x >= cx):
+            if dx > 0:
+                direction_counts["left_to_right"] += 1
+            else:
+                direction_counts["right_to_left"] += 1
+            # Count only once per vehicle
+            if not tr.counted_crossings["v"]:
+                class_totals[tr.cls] += 1
+            events.append({
+                "frame": frame_idx,
+                "track_id": tid,
+                "class": tr.cls,
+                "direction": "vertical"
+            })
+            tr.counted_crossings["v"] = True
+
 
         if fps_display:
             now = time.time()
