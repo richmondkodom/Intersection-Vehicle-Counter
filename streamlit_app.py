@@ -322,6 +322,7 @@ if start_btn:
             stats_col2.table(pd.DataFrame([class_totals]))
         else:
             stats_col2.info("No vehicles yet.")
+            
        # Stop button
        if st.button("⏹ Stop"):
         break
