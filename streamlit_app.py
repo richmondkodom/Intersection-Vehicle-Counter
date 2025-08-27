@@ -396,3 +396,26 @@ if start_btn:
             chart2.set_style(12)
 
             # Chart 3:
+                        # Chart 3: Overall Direction Totals
+            chart3 = workbook.add_chart({"type": "pie"})
+            chart3.add_series({
+                "name": "Direction Totals",
+                "categories": ["Direction Summary", 1, 0, 1, len(dir_df.columns)-1],
+                "values":     ["Direction Summary", 2, 0, 2, len(dir_df.columns)-1],
+            })
+            chart3.set_title({"name": "Overall Directions"})
+            chart3.set_style(10)
+
+            # Insert charts into summary worksheet
+            summary_ws.insert_chart(10, 0, chart1, {"x_scale": 1.2, "y_scale": 1.2})
+            summary_ws.insert_chart(10, 8, chart2, {"x_scale": 1.2, "y_scale": 1.2})
+            summary_ws.insert_chart(25, 0, chart3, {"x_scale": 1.2, "y_scale": 1.2})
+
+                    excel_data = output.getvalue()
+        st.download_button(
+            "⬇️ Download Excel Dashboard",
+            excel_data,
+            file_name="vehicle_summary.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
