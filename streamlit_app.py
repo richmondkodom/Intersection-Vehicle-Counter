@@ -371,7 +371,7 @@ if start_btn:
                 summary_ws.write(row, 0, k.replace("_", " ").title(), cell_fmt)
                 summary_ws.write(row, 1, v, cell_fmt)
                
-                            row += 1
+                            row = 1
 
             # Add Class counts
             for k, v in class_totals.items():
