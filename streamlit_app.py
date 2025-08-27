@@ -82,9 +82,8 @@ class CentroidTracker:
         return math.hypot(a[0]-b[0], a[1]-b[1])
 
     def update(self, detections):
-        # ensure iterable
         if detections is None:
-            detections = []
+            return {}
 
         now = time.time()
         to_del = [tid for tid, t in self.tracks.items() if (now - t.last_seen) > self.max_age]
@@ -131,17 +130,12 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
     h, w = frame.shape[:2]
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
     net.setInput(blob)
-    try:
-        outs = net.forward(output_layers)
-    except cv2.error:
-        return []
+    outs = net.forward(output_layers)
 
     boxes, confs, class_ids = [], [], []
     for out in outs:
         for det in out:
             scores = det[5:]
-            if len(scores) == 0:
-                continue
             class_id = int(np.argmax(scores))
             confidence = float(scores[class_id])
             if confidence > conf_thresh:
@@ -157,9 +151,6 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
                 boxes.append([x, y, bw, bh])
                 confs.append(confidence)
                 class_ids.append(class_id)
-
-    if not boxes:
-        return []
 
     idxs = cv2.dnn.NMSBoxes(boxes, confs, conf_thresh, nms_thresh)
     detections = []
@@ -204,6 +195,9 @@ with st.sidebar:
     show_trace = st.checkbox("Draw motion trails", value=True)
     fps_display = st.checkbox("Show FPS", value=True)
 
+    st.markdown("---")
+    st.caption("Tip: use a 720p clip for best live performance on CPU.")
+
 uploaded_video = None
 cap = None
 
@@ -215,11 +209,14 @@ else:
 start_btn = st.button("▶️ Start")
 
 # Counts
-direction_counts = {"left_to_right": 0, "right_to_left": 0, "up_to_down": 0, "down_to_up": 0}
+direction_counts = {
+    "left_to_right": 0,
+    "right_to_left": 0,
+    "up_to_down": 0,
+    "down_to_up": 0
+}
 class_totals = defaultdict(int)
-
-# For CSV report
-events = []
+events = []  # raw log
 
 if start_btn:
     if source == "Upload Video":
@@ -239,8 +236,6 @@ if start_btn:
     tracker = CentroidTracker(max_distance=max_distance, max_age=max_age)
     frame_holder = st.empty()
     stats_col1, stats_col2 = st.columns(2)
-    stats1_placeholder = stats_col1.empty()
-    stats2_placeholder = stats_col2.empty()
     fps_time = time.time()
     frame_idx = 0
 
@@ -272,12 +267,13 @@ if start_btn:
 
             if draw_boxes:
                 x = int(cx - bw/2); y = int(cy - bh/2)
-                cv2.rectangle(frame, (x, y), (x+bw, y+bh), (0, 255, 0), 2)
+                cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
 
             label = f"{cname} {int(conf*100)}%"
             if show_ids:
                 label = f"ID {tid} | " + label
-            cv2.putText(frame, label, (int(cx - bw/2), int(max(0, y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
+            cv2.putText(frame, label, (int(cx - bw/2), int(max(0, y-8))),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10, 220, 10), 2)
 
             if len(tr.trace) >= 2:
                 (px, py) = tr.trace[-2]
@@ -289,6 +285,114 @@ if start_btn:
                         if dy > 0:
                             direction_counts["up_to_down"] += 1
                             class_totals[cname] += 1
-The update_textdoc content is long; but done. Now must respond to user: They asked "fix this" earlier; now they want updated code sent. We updated the canvas. Need to reply with message telling we've fixed and where to get file. Must not repeat full code in chat per canmore instructions. Should refer to canvas. Also must offer next steps. So final message: confirm fixed syntax error, added safety guards, placeholders, and instructions to replace file. Provide brief instructions to download file or open canvas. Per canmore rules: DO NOT repeat the created content in main chat, as the user can see it in canvas. So we must inform them we updated the textdoc. Provide guidance: copy from canvas and replace app.py; mention run tests with RUN_SMOKE_TESTS=1. Offer to make further tweaks.
+                            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": "up_to_down"})
+                        else:
+                            direction_counts["down_to_up"] += 1
+                            class_totals[cname] += 1
+                            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": "down_to_up"})
+                        tr.counted_crossings["h"] = True
 
-Let's produce final chat. Keep tone friendly. Mention where saved: textdoc name "vehicle_counter_app". Also developer note said document in canvas name Vehicle Counter App. But our created name earlier was "vehicle_counter_app". The developer message earlier shows Name: Vehicle Counter App ID... So must refer to latest state. Use that name. Provide instruction to open canvas. Done. Ensure not to include code. Done.
+                if use_v and not tr.counted_crossings["v"]:
+                    if (px < v_line_x <= cx) or (px > v_line_x >= cx):
+                        if dx > 0:
+                            direction_counts["left_to_right"] += 1
+                            class_totals[cname] += 1
+                            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": "left_to_right"})
+                        else:
+                            direction_counts["right_to_left"] += 1
+                            class_totals[cname] += 1
+                            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": "right_to_left"})
+                        tr.counted_crossings["v"] = True
+
+        if fps_display:
+            now = time.time()
+            fps = 1.0 / max(1e-6, (now - fps_time))
+            fps_time = now
+            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50, 180, 255), 2)
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_holder.image(frame_rgb, channels="RGB")
+
+        with stats_col1:
+            st.subheader("Direction Counts")
+            st.write(pd.DataFrame([direction_counts]))
+        with stats_col2:
+            st.subheader("By Vehicle Class")
+            st.write(pd.DataFrame([class_totals]) if class_totals else pd.DataFrame([{}]))
+
+        if st.button("⏹ Stop", key=f"stop_{frame_idx}"):
+            break
+
+    cap.release()
+    st.success("Finished.")
+    total = sum(direction_counts.values())
+    st.metric("Grand Total", total)
+
+    if events:
+        df = pd.DataFrame(events)
+        st.dataframe(df, use_container_width=True)
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ Download Raw Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
+
+        # --- Summaries ---
+        dir_df = pd.DataFrame([direction_counts])
+        class_df = pd.DataFrame([class_totals])
+        pivot_df = pd.pivot_table(
+            df, values="track_id", index="class", columns="direction",
+            aggfunc="count", fill_value=0, margins=True, margins_name="Total"
+        )
+
+        # --- Excel Dashboard Export ---
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="Raw Events Log")
+            dir_df.to_excel(writer, index=False, sheet_name="Direction Summary")
+            class_df.to_excel(writer, index=False, sheet_name="Class Summary")
+            pivot_df.to_excel(writer, sheet_name="Class×Direction Summary")
+
+            workbook  = writer.book
+            header_fmt = workbook.add_format({"bold": True, "bg_color": "#DCE6F1", "border": 1, "align": "center"})
+            total_fmt  = workbook.add_format({"bold": True, "bg_color": "#FFE699", "border": 1, "align": "center"})
+            cell_fmt   = workbook.add_format({"border": 1})
+
+            summary_ws = workbook.add_worksheet("Grand Summary")
+            writer.sheets["Grand Summary"] = summary_ws
+
+            # Direction totals
+            summary_ws.write(0, 0, "Direction Totals", header_fmt)
+            for col, val in enumerate(dir_df.columns):
+                summary_ws.write(1, col, val, header_fmt)
+            for col, val in enumerate(dir_df.iloc[0]):
+                summary_ws.write(2, col, val, cell_fmt)
+
+            # Class totals
+            start_row = 6
+            summary_ws.write(start_row, 0, "Vehicle Class Totals", header_fmt)
+            for col, val in enumerate(class_df.columns):
+                summary_ws.write(start_row+1, col, val, header_fmt)
+            for col, val in enumerate(class_df.iloc[0]):
+                summary_ws.write(start_row+2, col, val, cell_fmt)
+
+            # Chart 1: Vehicles by Class
+            chart1 = workbook.add_chart({"type": "column"})
+            chart1.add_series({
+                "name": "Vehicles by Class",
+                "categories": f"'Class Summary'!A2:A{len(class_df)+1}",
+                "values":     f"'Class Summary'!B2:B{len(class_df)+1}",
+            })
+            chart1.set_title({"name": "Vehicles by Class"})
+            chart1.set_style(11)
+
+            # Chart 2: Directions by Class (stacked)
+            chart2 = workbook.add_chart({"type": "column", "subtype": "stacked"})
+            directions = pivot_df.columns[:-1]
+            for i, direction in enumerate(directions):
+                chart2.add_series({
+                    "name":       [ "Class×Direction Summary", 0, i+1 ],
+                    "categories": [ "Class×Direction Summary", 1, 0, len(pivot_df)-2, 0 ],
+                    "values":     [ "Class×Direction Summary", 1, i+1, len(pivot_df)-2, i+1 ],
+                })
+            chart2.set_title({"name": "Directions by Class"})
+            chart2.set_style(12)
+
+            # Chart 3:
