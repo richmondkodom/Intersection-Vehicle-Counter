@@ -324,9 +324,9 @@ if start_btn:
             stats_col2.info("No vehicles yet.")
             
        # Stop button
-       if st.button("⏹ Stop"):
-        break
-      
+      if st.button("⏹ Stop", key=f"stop_{frame_idx}"):
+       break
+
     cap.release()
     st.success("Finished.")
     total = sum(direction_counts.values())
