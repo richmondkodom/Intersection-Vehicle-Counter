@@ -323,6 +323,8 @@ if start_btn:
         else:
             stats_col2.info("No vehicles yet.")
 
+    if st.button("⏹ Stop"):
+    break
       
 
 
