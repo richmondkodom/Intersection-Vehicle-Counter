@@ -53,12 +53,10 @@ if net.empty():
     st.error("Failed to load YOLOv4-tiny network. Check weights/cfg files.")
     st.stop()
 
-try:
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
-except Exception:
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+# Force CPU backend (no CUDA needed)
+net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+
 
 layer_names = net.getLayerNames()
 try:
