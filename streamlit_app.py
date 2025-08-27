@@ -322,12 +322,10 @@ if start_btn:
             stats_col2.table(pd.DataFrame([class_totals]))
         else:
             stats_col2.info("No vehicles yet.")
-
-    if st.button("⏹ Stop"):
-    break
+       # Stop button
+       if st.button("⏹ Stop"):
+       break
       
-
-
     cap.release()
     st.success("Finished.")
     total = sum(direction_counts.values())
