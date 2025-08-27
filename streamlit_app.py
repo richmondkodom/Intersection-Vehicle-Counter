@@ -199,9 +199,6 @@ with st.sidebar:
     show_trace = st.checkbox("Draw motion trails", value=True)
     fps_display = st.checkbox("Show FPS", value=True)
 
-    st.markdown("---")
-    st.caption("Tip: use a 720p clip for best live performance on CPU.")
-
 uploaded_video = None
 cap = None
 
@@ -215,6 +212,10 @@ start_btn = st.button("▶️ Start")
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = {cls: 0 for cls in selected_classes}
 events = []  # store all events
+
+# === Sidebar live stats placeholders ===
+stats_placeholder = st.sidebar.empty()
+direction_placeholder = st.sidebar.empty()
 
 if start_btn:
     if source == "Upload Video":
@@ -267,7 +268,8 @@ if start_btn:
             label = f"{cname} {int(conf*100)}%"
             if show_ids:
                 label = f"ID {tid} | " + label
-            cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
+            cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
             # Check crossings
             if len(tr.trace) >= 2:
@@ -284,8 +286,7 @@ if start_btn:
                         else:
                             direction_counts["down_to_up"] += 1
                             events.append((tid, "down_to_up", tr.cls, frame_idx, event_time))
-                        if tr.cls in class_totals:
-                            class_totals[tr.cls] += 1
+                        class_totals[tr.cls] += 1
                         tr.counted_crossings["h"] = True
 
                 if use_v and not tr.counted_crossings["v"]:
@@ -296,8 +297,7 @@ if start_btn:
                         else:
                             direction_counts["right_to_left"] += 1
                             events.append((tid, "right_to_left", tr.cls, frame_idx, event_time))
-                        if tr.cls in class_totals:
-                            class_totals[tr.cls] += 1
+                        class_totals[tr.cls] += 1
                         tr.counted_crossings["v"] = True
 
         # === Overlay totals on video ===
@@ -318,6 +318,19 @@ if start_btn:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                         (255, 255, 255), 2, cv2.LINE_AA)
 
+        # === Live sidebar stats update ===
+        stats_placeholder.write("### 🚘 Vehicle Class Counts")
+        stats_placeholder.write(pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"]))
+
+        direction_placeholder.write("### 🧭 Direction Counts")
+        direction_placeholder.write(pd.DataFrame([
+            ["Left → Right", direction_counts["left_to_right"]],
+            ["Right → Left", direction_counts["right_to_left"]],
+            ["Up → Down", direction_counts["up_to_down"]],
+            ["Down → Up", direction_counts["down_to_up"]],
+        ], columns=["Direction", "Count"]))
+
+        # === FPS overlay ===
         if fps_display:
             now = time.time()
             fps = 1.0 / max(1e-6, now - fps_time)
