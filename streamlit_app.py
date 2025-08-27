@@ -135,10 +135,34 @@ class CentroidTracker:
 ###############################################################################
 # Vehicle detection
 ###############################################################################
-def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None, input_size=416):
+def detect_vehicles(frame, net, output_layers, CLASSES, tracks, direction_counts, class_totals, events,
+                    use_h=False, h_line_y=0, use_v=False, v_line_x=0, frame_idx=0,
+                    conf_thresh=0.3, nms_thresh=0.4, target_classes=None, input_size=416):
+    """
+    Detect vehicles in a frame, apply NMS, and update direction counts.
+
+    Parameters:
+    - frame: Current video frame (numpy array)
+    - net: OpenCV DNN network
+    - output_layers: YOLO output layers
+    - CLASSES: List of class names
+    - tracks: List of tracking objects (each should have .trace and .counted_crossings)
+    - direction_counts: Dictionary for direction totals
+    - class_totals: Dictionary for class totals
+    - events: List to store event dictionaries
+    - use_h, h_line_y: Horizontal counting line
+    - use_v, v_line_x: Vertical counting line
+    - frame_idx: Current frame index
+    - conf_thresh: Confidence threshold
+    - nms_thresh: NMS threshold
+    - target_classes: List of classes to detect (optional)
+    - input_size: YOLO input size
+    """
+
     h, w = frame.shape[:2]
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
     net.setInput(blob)
+    
     try:
         outs = net.forward(output_layers)
     except cv2.error as e:
@@ -146,6 +170,8 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
         return []
 
     boxes, confs, class_ids = [], [], []
+
+    # Collect detections
     for out in outs:
         for det in out:
             scores = det[5:]
@@ -158,37 +184,52 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
                 bh = int(det[3] * h)
                 x = int(cx - bw / 2)
                 y = int(cy - bh / 2)
-                cname = CLASSES[class_id] if class_id < len(CLASSES) else str(class_id)
-                if target_classes and cname not in target_classes:
-                    continue
                 boxes.append([x, y, bw, bh])
                 confs.append(confidence)
                 class_ids.append(class_id)
 
+    # Apply NMS
     idxs = cv2.dnn.NMSBoxes(boxes, confs, conf_thresh, nms_thresh)
     detections = []
-   if len(tr.trace) >= 2:
-    (px, py) = tr.trace[-2]
-    dx = cx - px
-    dy = cy - py
 
-    # Horizontal line
-    if use_h and not tr.counted_crossings["h"]:
-        if (py < h_line_y <= cy) or (py > h_line_y >= cy):
-            direction = "up_to_down" if dy > 0 else "down_to_up"
-            direction_counts[direction] += 1
-            class_totals[cname] = max(class_totals.get(cname, 0), 0) + 1
-            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": direction})
-            tr.counted_crossings["h"] = True
+    if len(idxs) > 0:
+        for i in idxs.flatten():
+            cname = CLASSES[class_ids[i]] if class_ids[i] < len(CLASSES) else str(class_ids[i])
+            if target_classes and cname not in target_classes:
+                continue
 
-    # Vertical line
-    if use_v and not tr.counted_crossings["v"]:
-        if (px < v_line_x <= cx) or (px > v_line_x >= cx):
-            direction = "left_to_right" if dx > 0 else "right_to_left"
-            direction_counts[direction] += 1
-            class_totals[cname] = max(class_totals.get(cname, 0), 0) + 1
-            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": direction})
-            tr.counted_crossings["v"] = True
+            x, y, bw, bh = boxes[i]
+            cx = int(x + bw / 2)
+            cy = int(y + bh / 2)
+
+            detections.append((cx, cy, bw, bh, cname, confs[i]))
+
+            # Update direction tracking for each track
+            for tr in tracks:
+                if len(tr.trace) >= 2:
+                    (px, py) = tr.trace[-2]
+                    dx = cx - px
+                    dy = cy - py
+
+                    # Horizontal line
+                    if use_h and not tr.counted_crossings.get("h", False):
+                        if (py < h_line_y <= cy) or (py > h_line_y >= cy):
+                            direction = "up_to_down" if dy > 0 else "down_to_up"
+                            direction_counts[direction] = direction_counts.get(direction, 0) + 1
+                            class_totals[cname] = class_totals.get(cname, 0) + 1
+                            events.append({"frame": frame_idx, "track_id": tr.track_id, "class": cname, "direction": direction})
+                            tr.counted_crossings["h"] = True
+
+                    # Vertical line
+                    if use_v and not tr.counted_crossings.get("v", False):
+                        if (px < v_line_x <= cx) or (px > v_line_x >= cx):
+                            direction = "left_to_right" if dx > 0 else "right_to_left"
+                            direction_counts[direction] = direction_counts.get(direction, 0) + 1
+                            class_totals[cname] = class_totals.get(cname, 0) + 1
+                            events.append({"frame": frame_idx, "track_id": tr.track_id, "class": cname, "direction": direction})
+                            tr.counted_crossings["v"] = True
+
+    return detections
 
 
 ###############################################################################
