@@ -39,14 +39,21 @@ def ensure_model_files():
 ensure_model_files()
 
 ###############################################################################
-# Load network + classes
+# Load classes
 ###############################################################################
 with open(FILES["names"], "r") as f:
     CLASSES = [c.strip() for c in f.readlines()]
 
 VEHICLE_CLASSES = {"car", "bus", "truck", "motorbike", "bicycle"}
 
+###############################################################################
+# Load YOLO network
+###############################################################################
 net = cv2.dnn.readNetFromDarknet(FILES["cfg"], FILES["weights"])
+if net.empty():
+    st.error("Failed to load YOLOv4-tiny network. Check weights/cfg files.")
+    st.stop()
+
 try:
     net.setPreferableBackend(cv2.dnn.DNN_BACKEND_CUDA)
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CUDA)
@@ -55,10 +62,13 @@ except Exception:
     net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
 layer_names = net.getLayerNames()
-output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
+try:
+    output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
+except:
+    output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
 
 ###############################################################################
-# Simple Centroid Tracker
+# Tracker
 ###############################################################################
 class Track:
     def __init__(self, track_id, centroid):
@@ -123,16 +133,17 @@ class CentroidTracker:
         return out
 
 ###############################################################################
-# Detection function
+# Vehicle detection
 ###############################################################################
 def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None, input_size=416):
-    if frame is None:
-        return []  # no detections if no frame
-
     h, w = frame.shape[:2]
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
     net.setInput(blob)
-    outs = net.forward(output_layers)
+    try:
+        outs = net.forward(output_layers)
+    except cv2.error as e:
+        st.error(f"Error during forward pass: {e}")
+        return []
 
     boxes, confs, class_ids = [], [], []
     for out in outs:
@@ -154,23 +165,21 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
                 confs.append(confidence)
                 class_ids.append(class_id)
 
+    idxs = cv2.dnn.NMSBoxes(boxes, confs, conf_thresh, nms_thresh)
     detections = []
-    if len(boxes) > 0:  # only run NMS if we have candidates
-        idxs = cv2.dnn.NMSBoxes(boxes, confs, conf_thresh, nms_thresh)
-        if len(idxs) > 0:
-            for i in idxs.flatten():
-                x, y, bw, bh = boxes[i]
-                cx = x + bw // 2
-                cy = y + bh // 2
-                cname = CLASSES[class_ids[i]] if class_ids[i] < len(CLASSES) else str(class_ids[i])
-                detections.append((cx, cy, bw, bh, cname, confs[i]))
+    if len(idxs) > 0:
+        for i in idxs.flatten():
+            x, y, bw, bh = boxes[i]
+            cx = x + bw // 2
+            cy = y + bh // 2
+            cname = CLASSES[class_ids[i]] if class_ids[i] < len(CLASSES) else str(class_ids[i])
+            detections.append((cx, cy, bw, bh, cname, confs[i]))
     return detections
-
 
 ###############################################################################
 # Streamlit UI
 ###############################################################################
-st.set_page_config(page_title="Vehicle Counter (Streamlit)", layout="wide")
+st.set_page_config(page_title="Vehicle Counter", layout="wide")
 st.title("🚗 Vehicle Detector & Direction Counter")
 
 with st.sidebar:
@@ -188,11 +197,7 @@ with st.sidebar:
     v_ratio = st.slider("Vertical line position (width ratio)", 0.1, 0.9, 0.5, 0.05)
 
     st.markdown("**Classes**")
-    selected_classes = st.multiselect(
-        "Vehicle classes to detect",
-        sorted(list(VEHICLE_CLASSES)),
-        default=["car", "truck", "bus", "motorbike", "bicycle"]
-    )
+    selected_classes = st.multiselect("Vehicle classes to detect", sorted(list(VEHICLE_CLASSES)), default=list(VEHICLE_CLASSES))
 
     draw_boxes = st.checkbox("Draw boxes", value=True)
     show_ids = st.checkbox("Show track IDs", value=True)
@@ -212,13 +217,7 @@ else:
 
 start_btn = st.button("▶️ Start")
 
-# Counts
-direction_counts = {
-    "left_to_right": 0,
-    "right_to_left": 0,
-    "up_to_down": 0,
-    "down_to_up": 0
-}
+direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = defaultdict(int)
 events = []
 
@@ -267,20 +266,18 @@ if start_btn:
             tr = tracker.tracks[tid]
             if show_trace and len(tr.trace) >= 2:
                 for i in range(1, len(tr.trace)):
-                    cv2.line(frame, tr.trace[i-1], tr.trace[i], (200, 200, 200), 2)
-
+                    cv2.line(frame, tr.trace[i-1], tr.trace[i], (200,200,200), 2)
             if draw_boxes:
                 x = int(cx - bw/2); y = int(cy - bh/2)
-                cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
-
+                cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0,255,0), 2)
             label = f"{cname} {int(conf*100)}%"
             if show_ids:
                 label = f"ID {tid} | " + label
-            cv2.putText(frame, label, (int(cx - bw/2), int(max(0, y-8))),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10, 220, 10), 2)
+            cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
+            # Check crossings
             if len(tr.trace) >= 2:
-                (px, py) = tr.trace[-2]
+                px, py = tr.trace[-2]
                 dx = cx - px
                 dy = cy - py
 
@@ -288,31 +285,27 @@ if start_btn:
                     if (py < h_line_y <= cy) or (py > h_line_y >= cy):
                         if dy > 0:
                             direction_counts["up_to_down"] += 1
-                            class_totals[cname] += 1
-                            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": "up_to_down"})
                         else:
                             direction_counts["down_to_up"] += 1
-                            class_totals[cname] += 1
-                            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": "down_to_up"})
+                        class_totals[cname] += 1
+                        events.append({"frame":frame_idx, "track_id":tid, "class":cname})
                         tr.counted_crossings["h"] = True
 
                 if use_v and not tr.counted_crossings["v"]:
                     if (px < v_line_x <= cx) or (px > v_line_x >= cx):
                         if dx > 0:
                             direction_counts["left_to_right"] += 1
-                            class_totals[cname] += 1
-                            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": "left_to_right"})
                         else:
                             direction_counts["right_to_left"] += 1
-                            class_totals[cname] += 1
-                            events.append({"frame": frame_idx, "track_id": tid, "class": cname, "direction": "right_to_left"})
+                        class_totals[cname] += 1
+                        events.append({"frame":frame_idx, "track_id":tid, "class":cname})
                         tr.counted_crossings["v"] = True
 
         if fps_display:
             now = time.time()
-            fps = 1.0 / max(1e-6, (now - fps_time))
+            fps = 1.0 / max(1e-6, now - fps_time)
             fps_time = now
-            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50, 180, 255), 2)
+            cv2.putText(frame, f"FPS: {fps:.1f}", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50,180,255), 2)
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_holder.image(frame_rgb, channels="RGB")
@@ -337,107 +330,3 @@ if start_btn:
         st.dataframe(df, use_container_width=True)
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download Raw Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
-
-        # --- Summaries ---
-        dir_df = pd.DataFrame([direction_counts])
-        class_df = pd.DataFrame([class_totals])
-        pivot_df = pd.pivot_table(
-            df, values="track_id", index="class", columns="direction",
-            aggfunc="count", fill_value=0, margins=True, margins_name="Total"
-        )
-
-        # --- Excel Dashboard Export ---
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-            df.to_excel(writer, index=False, sheet_name="Raw Events Log")
-            dir_df.to_excel(writer, index=False, sheet_name="Direction Summary")
-            class_df.to_excel(writer, index=False, sheet_name="Class Summary")
-            pivot_df.to_excel(writer, sheet_name="Class×Direction Summary")
-
-            workbook  = writer.book
-            header_fmt = workbook.add_format({"bold": True, "bg_color": "#DCE6F1", "border": 1, "align": "center"})
-            cell_fmt   = workbook.add_format({"border": 1})
-            total_fmt  = workbook.add_format({"bold": True, "bg_color": "#FFE699", "border": 1, "align": "center"})
-
-            # --- Unified Grand Summary ---
-            summary_ws = workbook.add_worksheet("Grand Summary")
-            writer.sheets["Grand Summary"] = summary_ws
-
-            summary_ws.write(0, 0, "Category", header_fmt)
-            summary_ws.write(0, 1, "Count", header_fmt)
-
-         
-            # Add Class counts
-            for k, v in class_totals.items():
-                summary_ws.write(row, 0, k.title(), cell_fmt)
-                summary_ws.write(row, 1, v, cell_fmt)
-                row += 1
-
-            # Add Grand Total
-            grand_total = sum(direction_counts.values())
-            summary_ws.write(row, 0, "Grand Total", total_fmt)
-            summary_ws.write(row, 1, grand_total, total_fmt)
-
-            # Auto-adjust columns
-            summary_ws.set_column(0, 0, 25)
-            summary_ws.set_column(1, 1, 12)
-
-            # --- Highlight Totals in other sheets ---
-            for sheet_name, df_obj in {
-                "Direction Summary": dir_df,
-                "Class Summary": class_df,
-                "Class×Direction Summary": pivot_df,
-            }.items():
-                worksheet = writer.sheets[sheet_name]
-                for idx, col in enumerate(df_obj.columns):
-                    max_len = max(df_obj[col].astype(str).map(len).max(), len(str(col))) + 2
-                    worksheet.set_column(idx, idx, max_len)
-
-                # Highlight "Total" row if present
-                if "Total" in df_obj.index or "Total" in df_obj.values:
-                    last_row = len(df_obj) + 1
-                    worksheet.set_row(last_row, None, total_fmt)
-
-            # --- Charts ---
-            chart1 = workbook.add_chart({"type": "column"})
-            chart1.add_series({
-                "name": "Vehicles by Class",
-                "categories": f"'Class Summary'!A2:A{len(class_df)+1}",
-                "values":     f"'Class Summary'!B2:B{len(class_df)+1}",
-            })
-            chart1.set_title({"name": "Vehicles by Class"})
-            chart1.set_style(11)
-
-            chart2 = workbook.add_chart({"type": "column", "subtype": "stacked"})
-            directions = pivot_df.columns[:-1]
-            for i, direction in enumerate(directions):
-                chart2.add_series({
-                    "name":       ["Class×Direction Summary", 0, i+1],
-                    "categories": ["Class×Direction Summary", 1, 0, len(pivot_df)-2, 0],
-                    "values":     ["Class×Direction Summary", 1, i+1, len(pivot_df)-2, i+1],
-                })
-            chart2.set_title({"name": "Directions by Class"})
-            chart2.set_style(12)
-
-            chart3 = workbook.add_chart({"type": "pie"})
-            chart3.add_series({
-                "name": "Direction Totals",
-                "categories": ["Direction Summary", 1, 0, 1, len(dir_df.columns)-1],
-                "values":     ["Direction Summary", 2, 0, 2, len(dir_df.columns)-1],
-            })
-            chart3.set_title({"name": "Overall Directions"})
-            chart3.set_style(10)
-
-            # Place charts under the unified summary
-            summary_ws.insert_chart(row+3, 0, chart1, {"x_scale": 1.2, "y_scale": 1.2})
-            summary_ws.insert_chart(row+3, 8, chart2, {"x_scale": 1.2, "y_scale": 1.2})
-            summary_ws.insert_chart(row+20, 0, chart3, {"x_scale": 1.2, "y_scale": 1.2})
-
-        # Provide download button
-        excel_data = output.getvalue()
-        st.download_button(
-            "⬇️ Download Excel Dashboard",
-            excel_data,
-            file_name="vehicle_summary.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
