@@ -126,6 +126,9 @@ class CentroidTracker:
 # Detection function
 ###############################################################################
 def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None, input_size=416):
+    if frame is None:
+        return []  # no detections if no frame
+
     h, w = frame.shape[:2]
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
     net.setInput(blob)
@@ -151,16 +154,18 @@ def detect_vehicles(frame, conf_thresh=0.3, nms_thresh=0.4, target_classes=None,
                 confs.append(confidence)
                 class_ids.append(class_id)
 
-    idxs = cv2.dnn.NMSBoxes(boxes, confs, conf_thresh, nms_thresh)
     detections = []
-    if len(idxs) > 0:
-        for i in idxs.flatten():
-            x, y, bw, bh = boxes[i]
-            cx = x + bw // 2
-            cy = y + bh // 2
-            cname = CLASSES[class_ids[i]] if class_ids[i] < len(CLASSES) else str(class_ids[i])
-            detections.append((cx, cy, bw, bh, cname, confs[i]))
+    if len(boxes) > 0:  # only run NMS if we have candidates
+        idxs = cv2.dnn.NMSBoxes(boxes, confs, conf_thresh, nms_thresh)
+        if len(idxs) > 0:
+            for i in idxs.flatten():
+                x, y, bw, bh = boxes[i]
+                cx = x + bw // 2
+                cy = y + bh // 2
+                cname = CLASSES[class_ids[i]] if class_ids[i] < len(CLASSES) else str(class_ids[i])
+                detections.append((cx, cy, bw, bh, cname, confs[i]))
     return detections
+
 
 ###############################################################################
 # Streamlit UI
