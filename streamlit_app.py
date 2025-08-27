@@ -366,13 +366,7 @@ if start_btn:
             summary_ws.write(0, 0, "Category", header_fmt)
             summary_ws.write(0, 1, "Count", header_fmt)
 
-            row = 1
-            for k, v in direction_counts.items():
-                summary_ws.write(row, 0, k.replace("_", " ").title(), cell_fmt)
-                summary_ws.write(row, 1, v, cell_fmt)
-               
-                            row = 1
-
+         
             # Add Class counts
             for k, v in class_totals.items():
                 summary_ws.write(row, 0, k.title(), cell_fmt)
