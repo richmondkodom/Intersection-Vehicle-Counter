@@ -53,7 +53,7 @@ if net.empty():
     st.error("Failed to load YOLOv4-tiny network. Check weights/cfg files.")
     st.stop()
 
-# Force CPU backend (no CUDA needed)
+# Force CPU backend
 net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
 net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
@@ -181,7 +181,7 @@ st.title("🚗 Intersection Vehicle Counter")
 with st.sidebar:
     st.header("Settings")
     source = st.radio("Source", ["Upload Video", "Webcam"], index=0)
-    conf_thresh = st.slider("Detection confidence", 0.1, 0.9, 0.20, 0.05)  # lowered default
+    conf_thresh = st.slider("Detection confidence", 0.1, 0.9, 0.35, 0.05)
     nms_thresh = st.slider("NMS threshold", 0.1, 0.9, 0.45, 0.05)
     input_size = st.select_slider("Model input size", options=[320, 416, 512, 608], value=416)
     max_distance = st.slider("Tracker max match distance (px)", 10, 150, 60, 5)
@@ -200,9 +200,6 @@ with st.sidebar:
     show_trace = st.checkbox("Draw motion trails", value=True)
     fps_display = st.checkbox("Show FPS", value=True)
 
-    st.markdown("---")
-    st.caption("Tip: use a 720p clip for best live performance on CPU.")
-
 uploaded_video = None
 cap = None
 
@@ -215,7 +212,7 @@ start_btn = st.button("▶️ Start")
 
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = {cls: 0 for cls in selected_classes}
-events = []  # store all events
+events = []
 
 if start_btn:
     if source == "Upload Video":
@@ -250,7 +247,6 @@ if start_btn:
         use_h = line_mode in ("Horizontal & Vertical", "Horizontal only")
         use_v = line_mode in ("Horizontal & Vertical", "Vertical only")
 
-        # filter only selected vehicle classes
         dets = detect_vehicles(frame, conf_thresh, nms_thresh, set(selected_classes), input_size)
         tracks = tracker.update(dets)
 
@@ -270,16 +266,16 @@ if start_btn:
             label = f"{cname} {int(conf*100)}%"
             if show_ids:
                 label = f"ID {tid} | " + label
-            cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
+            cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
 
-            # Check crossings
+            # Count crossings
             if len(tr.trace) >= 2:
                 px, py = tr.trace[-2]
                 dx = cx - px
                 dy = cy - py
                 event_time = time.strftime("%H:%M:%S", time.localtime())
 
-                # Horizontal line
                 if use_h and not tr.counted_crossings["h"]:
                     if (py < h_line_y <= cy) or (py > h_line_y >= cy):
                         if dy > 0:
@@ -291,7 +287,6 @@ if start_btn:
                         class_totals[tr.cls] += 1
                         tr.counted_crossings["h"] = True
 
-                # Vertical line
                 if use_v and not tr.counted_crossings["v"]:
                     if (px < v_line_x <= cx) or (px > v_line_x >= cx):
                         if dx > 0:
@@ -303,16 +298,25 @@ if start_btn:
                         class_totals[tr.cls] += 1
                         tr.counted_crossings["v"] = True
 
+        # === Overlay totals on video ===
+        overlay_text = " | ".join([f"{cls.capitalize()}: {cnt}" for cls, cnt in class_totals.items()])
+        total_text = f"Total: {sum(class_totals.values())}"
+        y0 = 50
+        for i, line in enumerate([overlay_text, total_text]):
+            y = y0 + i * 25
+            cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8, (255, 255, 255), 2, cv2.LINE_AA)
+
         if fps_display:
             now = time.time()
             fps = 1.0 / max(1e-6, now - fps_time)
             fps_time = now
-            cv2.putText(frame, f"FPS: {fps:.1f}", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50,180,255), 2)
+            cv2.putText(frame, f"FPS: {fps:.1f}", (10,30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50,180,255), 2)
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_holder.image(frame_rgb, channels="RGB")
 
-        # Update stats
         stats_col1.metric("Left → Right", direction_counts["left_to_right"])
         stats_col1.metric("Right → Left", direction_counts["right_to_left"])
         stats_col1.metric("Up → Down", direction_counts["up_to_down"])
