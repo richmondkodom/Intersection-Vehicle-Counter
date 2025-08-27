@@ -138,26 +138,7 @@ class CentroidTracker:
 def detect_vehicles(frame, net, output_layers, CLASSES, tracks, direction_counts, class_totals, events,
                     use_h=False, h_line_y=0, use_v=False, v_line_x=0, frame_idx=0,
                     conf_thresh=0.3, nms_thresh=0.4, target_classes=None, input_size=416):
-    """
-    Detect vehicles in a frame, apply NMS, and update direction counts.
-
-    Parameters:
-    - frame: Current video frame (numpy array)
-    - net: OpenCV DNN network
-    - output_layers: YOLO output layers
-    - CLASSES: List of class names
-    - tracks: List of tracking objects (each should have .trace and .counted_crossings)
-    - direction_counts: Dictionary for direction totals
-    - class_totals: Dictionary for class totals
-    - events: List to store event dictionaries
-    - use_h, h_line_y: Horizontal counting line
-    - use_v, v_line_x: Vertical counting line
-    - frame_idx: Current frame index
-    - conf_thresh: Confidence threshold
-    - nms_thresh: NMS threshold
-    - target_classes: List of classes to detect (optional)
-    - input_size: YOLO input size
-    """
+   
 
     h, w = frame.shape[:2]
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
