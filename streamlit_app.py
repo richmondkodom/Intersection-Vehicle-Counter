@@ -7,7 +7,6 @@ import tempfile
 import numpy as np
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from collections import deque, defaultdict
 
 ###############################################################################
@@ -173,22 +172,13 @@ def detect_vehicles(frame, conf_thresh=0.2, nms_thresh=0.4, target_classes=None,
     return detections
 
 ###############################################################################
-# Streamlit UI (light theme dashboard)
+# Streamlit UI
 ###############################################################################
 st.set_page_config(page_title="Vehicle Counter", layout="wide")
-
-# --- Custom light background ---
-st.markdown("""
-    <style>
-        body { background-color: #f8f9fa; }
-        .stApp { background-color: #f8f9fa; }
-    </style>
-""", unsafe_allow_html=True)
-
 st.title("🚗 Intersection Vehicle Counter")
 
 with st.sidebar:
-    st.header("⚙️ Settings")
+    st.header("Settings")
     source = st.radio("Source", ["Upload Video", "Webcam"], index=0)
     conf_thresh = st.slider("Detection confidence", 0.1, 0.9, 0.20, 0.05)
     nms_thresh = st.slider("NMS threshold", 0.1, 0.9, 0.45, 0.05)
@@ -196,12 +186,12 @@ with st.sidebar:
     max_distance = st.slider("Tracker max match distance (px)", 10, 150, 60, 5)
     max_age = st.slider("Tracker max age (sec)", 1.0, 5.0, 2.0, 0.5)
 
-    st.markdown("**📏 Count Lines**")
+    st.markdown("**Count Lines**")
     line_mode = st.selectbox("Which lines to use for counting?", ["Horizontal & Vertical", "Horizontal only", "Vertical only"], index=0)
     h_ratio = st.slider("Horizontal line position (height ratio)", 0.1, 0.9, 0.5, 0.05)
     v_ratio = st.slider("Vertical line position (width ratio)", 0.1, 0.9, 0.5, 0.05)
 
-    st.markdown("**🚘 Classes**")
+    st.markdown("**Classes**")
     selected_classes = st.multiselect("Vehicle classes to detect", sorted(list(VEHICLE_CLASSES)), default=list(VEHICLE_CLASSES))
 
     draw_boxes = st.checkbox("Draw boxes", value=True)
@@ -222,6 +212,10 @@ start_btn = st.button("▶️ Start")
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = {cls: 0 for cls in selected_classes}
 events = []  # store all events
+
+# === Sidebar live stats placeholders ===
+stats_placeholder = st.sidebar.empty()
+direction_placeholder = st.sidebar.empty()
 
 if start_btn:
     if source == "Upload Video":
@@ -306,6 +300,36 @@ if start_btn:
                         class_totals[tr.cls] += 1
                         tr.counted_crossings["v"] = True
 
+        # === Overlay totals on video ===
+        overlay_lines = []
+        overlay_lines.append(" | ".join([f"{cls.capitalize()}: {cnt}" for cls, cnt in class_totals.items()]))
+        overlay_lines.append(f"Total: {sum(class_totals.values())}")
+        overlay_lines.append(
+            f"L→R: {direction_counts['left_to_right']} | R→L: {direction_counts['right_to_left']}"
+        )
+        overlay_lines.append(
+            f"U→D: {direction_counts['up_to_down']} | D→U: {direction_counts['down_to_up']}"
+        )
+
+        y0 = 40
+        for i, line in enumerate(overlay_lines):
+            y = y0 + i * 25
+            cv2.putText(frame, line, (10, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                        (255, 255, 255), 2, cv2.LINE_AA)
+
+        # === Live sidebar stats update ===
+        stats_placeholder.write("### 🚘 Vehicle Class Counts")
+        stats_placeholder.write(pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"]))
+
+        direction_placeholder.write("### 🧭 Direction Counts")
+        direction_placeholder.write(pd.DataFrame([
+            ["Left → Right", direction_counts["left_to_right"]],
+            ["Right → Left", direction_counts["right_to_left"]],
+            ["Up → Down", direction_counts["up_to_down"]],
+            ["Down → Up", direction_counts["down_to_up"]],
+        ], columns=["Direction", "Count"]))
+
         # === FPS overlay ===
         if fps_display:
             now = time.time()
@@ -322,41 +346,8 @@ if start_btn:
     total = sum(direction_counts.values())
     st.metric("Grand Total", total)
 
-    # ===================== CHARTS =====================
-    COLOR_MAP = {
-        "Left → Right": "#4CAF50",
-        "Right → Left": "#2196F3",
-        "Up → Down": "#FF9800",
-        "Down → Up": "#9C27B0",
-    }
-    CLASS_COLORS = px.colors.qualitative.Set2
-
-    if class_totals:
-        df_classes = pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"])
-        fig_classes = px.bar(df_classes, x="Class", y="Count", color="Class",
-                             color_discrete_sequence=CLASS_COLORS,
-                             title="🚘 Vehicles by Class")
-        st.plotly_chart(fig_classes, use_container_width=True)
-
-    df_directions = pd.DataFrame([
-        ["Left → Right", direction_counts["left_to_right"]],
-        ["Right → Left", direction_counts["right_to_left"]],
-        ["Up → Down", direction_counts["up_to_down"]],
-        ["Down → Up", direction_counts["down_to_up"]],
-    ], columns=["Direction", "Count"])
-    fig_directions = px.pie(df_directions, names="Direction", values="Count",
-                            title="🧭 Direction Share", color="Direction",
-                            color_discrete_map=COLOR_MAP)
-    st.plotly_chart(fig_directions, use_container_width=True)
-
     if events:
-        df_events = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
-        df_events["cum_total"] = range(1, len(df_events)+1)
-        fig_time = px.line(df_events, x="timestamp", y="cum_total",
-                           title="📈 Total Vehicles Over Time",
-                           markers=True, line_shape="spline")
-        st.plotly_chart(fig_time, use_container_width=True)
-
-        st.dataframe(df_events, use_container_width=True)
-        csv = df_events.to_csv(index=False).encode("utf-8")
+        df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
+        st.dataframe(df, use_container_width=True)
+        csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
