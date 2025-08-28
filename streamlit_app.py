@@ -11,30 +11,35 @@ import plotly.express as px
 from collections import deque
 
 # ============================================================================
-# App setup & style
+# App setup & style (Light Theme for clarity)
 # ============================================================================
 st.set_page_config(page_title="🚦 Vehicle Counter Dashboard", layout="wide")
 st.markdown("""
     <style>
         .stApp {
-            background: linear-gradient(135deg, #141e30, #243b55);
-            color: #fff;
+            background: #fdfdfd;
+            color: #111;
         }
         section[data-testid="stSidebar"] {
-            background: #1e1e1e;
+            background: #f1f1f1;
+            color: #000;
         }
-        h1, h2, h3 {
-            color: #f5f5f5 !important;
+        h1, h2, h3, h4 {
+            color: #222 !important;
         }
         div[data-testid="stMetric"] {
-            background: rgba(255,255,255,0.08);
+            background: #ffffff;
+            border: 1px solid #ddd;
             border-radius: 12px;
             padding: 15px;
             margin: 8px 0;
+            color: #111;
         }
         .block-container { padding-top: 1rem; }
+        .stDataFrame { background: #fff; color: #111; }
     </style>
 """, unsafe_allow_html=True)
+
 
 st.title("🚦 Smart Vehicle Counter Dashboard")
 
