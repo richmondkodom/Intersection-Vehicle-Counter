@@ -5,3 +5,4 @@ pandas
 xlsxwriter
 Plotly
 json, hashlib
+deque, defaultdict
