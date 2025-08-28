@@ -7,6 +7,7 @@ import tempfile
 import numpy as np
 import streamlit as st
 import pandas as pd
+import plotly.express as px
 from collections import deque, defaultdict
 
 ###############################################################################
@@ -211,11 +212,15 @@ start_btn = st.button("▶️ Start")
 
 direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
 class_totals = {cls: 0 for cls in selected_classes}
-events = []  # store all events
+events = []
 
 # === Sidebar live stats placeholders ===
 stats_placeholder = st.sidebar.empty()
 direction_placeholder = st.sidebar.empty()
+
+# === Chart placeholders under video ===
+chart_placeholder = st.empty()
+class_chart_placeholder = st.empty()
 
 if start_btn:
     if source == "Upload Video":
@@ -330,6 +335,25 @@ if start_btn:
             ["Down → Up", direction_counts["down_to_up"]],
         ], columns=["Direction", "Count"]))
 
+        # === Live charts below video ===
+        class_df = pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"])
+        dir_df = pd.DataFrame([
+            ["Left → Right", direction_counts["left_to_right"]],
+            ["Right → Left", direction_counts["right_to_left"]],
+            ["Up → Down", direction_counts["up_to_down"]],
+            ["Down → Up", direction_counts["down_to_up"]],
+        ], columns=["Direction", "Count"])
+
+        if not class_df.empty:
+            fig_classes = px.bar(class_df, x="Class", y="Count", title="Vehicle Class Counts", text="Count")
+            fig_classes.update_traces(textposition="outside")
+            class_chart_placeholder.plotly_chart(fig_classes, use_container_width=True)
+
+        if not dir_df.empty:
+            fig_dirs = px.bar(dir_df, x="Direction", y="Count", title="Direction Counts", text="Count")
+            fig_dirs.update_traces(textposition="outside")
+            chart_placeholder.plotly_chart(fig_dirs, use_container_width=True)
+
         # === FPS overlay ===
         if fps_display:
             now = time.time()
@@ -346,8 +370,40 @@ if start_btn:
     total = sum(direction_counts.values())
     st.metric("Grand Total", total)
 
+    # === Final Dataframe + CSV download ===
     if events:
         df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
         st.dataframe(df, use_container_width=True)
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
+
+        # === Final Charts Export ===
+        st.subheader("📊 Final Charts")
+        fig_classes = px.bar(class_df, x="Class", y="Count", title="Final Vehicle Class Counts", text="Count")
+        fig_dirs = px.bar(dir_df, x="Direction", y="Count", title="Final Direction Counts", text="Count")
+
+        st.plotly_chart(fig_classes, use_container_width=True)
+        st.plotly_chart(fig_dirs, use_container_width=True)
+
+        # Export charts as PNG
+        st.download_button("⬇️ Download Vehicle Class Chart (PNG)",
+                           fig_classes.to_image(format="png"),
+                           file_name="class_counts.png",
+                           mime="image/png")
+        st.download_button("⬇️ Download Direction Chart (PNG)",
+                           fig_dirs.to_image(format="png"),
+                           file_name="direction_counts.png",
+                           mime="image/png")
+
+    else:
+        st.info("No crossing events were recorded.")
+
+    # Cleanup temporary file if used
+    try:
+        if source == "Upload Video":
+            tfile.close()
+            os.unlink(tfile.name)
+    except Exception:
+        pass
+
+# End of streamlit_app.py
