@@ -217,8 +217,10 @@ events = []  # store all events
 # === Sidebar live stats placeholders ===
 stats_placeholder = st.sidebar.empty()
 direction_placeholder = st.sidebar.empty()
-live_chart_cls = st.empty()
+
+# === Live chart placeholders ===
 live_chart_dir = st.empty()
+live_chart_cls = st.empty()
 
 if start_btn:
     if source == "Upload Video":
@@ -239,6 +241,10 @@ if start_btn:
     frame_holder = st.empty()
     fps_time = time.time()
     frame_idx = 0
+
+    # initialize safe dfs
+    class_df = pd.DataFrame(columns=["Class", "Count"])
+    dir_df = pd.DataFrame(columns=["Direction", "Count"])
 
     while True:
         ret, frame = cap.read()
@@ -333,7 +339,7 @@ if start_btn:
             ["Down → Up", direction_counts["down_to_up"]],
         ], columns=["Direction", "Count"]))
 
-        # === Charts live update (safe) ===
+        # === Live charts (safe rendering) ===
         class_df = pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"])
         dir_df = pd.DataFrame([
             ["Left → Right", direction_counts["left_to_right"]],
@@ -370,15 +376,15 @@ if start_btn:
     total = sum(direction_counts.values())
     st.metric("Grand Total", total)
 
-    # === Final summary charts ===
+    # === Final summary charts (safe rendering) ===
     st.subheader("📊 Final Charts")
+
     if not class_df.empty and class_df["Count"].sum() > 0:
         fig_classes = px.bar(class_df, x="Class", y="Count", title="Vehicle Class Counts", text="Count")
         fig_classes.update_traces(textposition="outside")
         st.plotly_chart(fig_classes, use_container_width=True, key="final_class_chart")
 
-        fig_pie = px.pie(class_df, values="Count", names="Class",
-                         title="Vehicle Share (%)", hole=0.3)
+        fig_pie = px.pie(class_df, values="Count", names="Class", title="Vehicle Share (%)", hole=0.3)
         st.plotly_chart(fig_pie, use_container_width=True, key="final_pie_chart")
 
     if not dir_df.empty and dir_df["Count"].sum() > 0:
