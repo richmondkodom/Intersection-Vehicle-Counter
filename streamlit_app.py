@@ -218,6 +218,11 @@ events = []  # store all events
 stats_placeholder = st.sidebar.empty()
 direction_placeholder = st.sidebar.empty()
 
+# Predefine DataFrames and figs (to avoid AttributeError if no detections)
+class_df = pd.DataFrame(columns=["Class", "Count"])
+dir_df = pd.DataFrame(columns=["Direction", "Count"])
+fig_classes, fig_dirs, fig_pie = None, None, None
+
 if start_btn:
     if source == "Upload Video":
         if uploaded_video is None:
@@ -241,7 +246,6 @@ if start_btn:
     # Live chart placeholders
     live_chart_dir = st.empty()
     live_chart_cls = st.empty()
-    live_chart_pie = st.empty()
 
     while True:
         ret, frame = cap.read()
@@ -336,7 +340,7 @@ if start_btn:
             ["Down → Up", direction_counts["down_to_up"]],
         ], columns=["Direction", "Count"]))
 
-        # === Live charts ===
+        # === Charts live update ===
         class_df = pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"])
         dir_df = pd.DataFrame([
             ["Left → Right", direction_counts["left_to_right"]],
@@ -346,23 +350,14 @@ if start_btn:
         ], columns=["Direction", "Count"])
 
         if not class_df.empty:
-            fig_classes = px.bar(class_df, x="Class", y="Count",
-                                 title="Vehicle Class Counts", text="Count")
+            fig_classes = px.bar(class_df, x="Class", y="Count", title="Vehicle Class Counts", text="Count")
             fig_classes.update_traces(textposition="outside")
-            live_chart_cls.plotly_chart(fig_classes, use_container_width=True,
-                                        key=f"class_chart_{frame_idx}")
-
-            fig_pie = px.pie(class_df, values="Count", names="Class",
-                             title="Vehicle Share (%)", hole=0.3)
-            live_chart_pie.plotly_chart(fig_pie, use_container_width=True,
-                                        key=f"pie_chart_{frame_idx}")
+            live_chart_cls.plotly_chart(fig_classes, use_container_width=True, key=f"class_chart_{frame_idx}")
 
         if not dir_df.empty:
-            fig_dirs = px.bar(dir_df, x="Direction", y="Count",
-                              title="Direction Counts", text="Count")
+            fig_dirs = px.bar(dir_df, x="Direction", y="Count", title="Direction Counts", text="Count")
             fig_dirs.update_traces(textposition="outside")
-            live_chart_dir.plotly_chart(fig_dirs, use_container_width=True,
-                                        key=f"dir_chart_{frame_idx}")
+            live_chart_dir.plotly_chart(fig_dirs, use_container_width=True, key=f"dir_chart_{frame_idx}")
 
         # === FPS overlay ===
         if fps_display:
@@ -380,25 +375,25 @@ if start_btn:
     total = sum(direction_counts.values())
     st.metric("Grand Total", total)
 
-    # Final summary charts
+    # === Final summary charts ===
     st.subheader("📊 Final Charts")
-    if not class_df.empty:
+    if fig_classes is not None and not class_df.empty:
         st.plotly_chart(fig_classes, use_container_width=True, key="final_class_chart")
+        fig_pie = px.pie(class_df, values="Count", names="Class", title="Vehicle Share (%)", hole=0.3)
         st.plotly_chart(fig_pie, use_container_width=True, key="final_pie_chart")
-    if not dir_df.empty:
+    if fig_dirs is not None and not dir_df.empty:
         st.plotly_chart(fig_dirs, use_container_width=True, key="final_dir_chart")
 
-    # Events log
+    # === Events log ===
     if events:
         df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
         st.dataframe(df, use_container_width=True)
         csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download Log (CSV)", csv,
-                           file_name="vehicle_counts.csv", mime="text/csv")
+        st.download_button("⬇️ Download Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
     else:
         st.info("No crossing events were recorded.")
 
-    # Cleanup temporary file
+    # Cleanup temporary file if used
     try:
         if source == "Upload Video":
             tfile.close()
