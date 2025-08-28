@@ -7,7 +7,6 @@ import tempfile
 import numpy as np
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 from collections import deque, defaultdict
 
 ###############################################################################
@@ -218,10 +217,6 @@ events = []  # store all events
 stats_placeholder = st.sidebar.empty()
 direction_placeholder = st.sidebar.empty()
 
-# === Live chart placeholders ===
-live_chart_dir = st.empty()
-live_chart_cls = st.empty()
-
 if start_btn:
     if source == "Upload Video":
         if uploaded_video is None:
@@ -241,10 +236,6 @@ if start_btn:
     frame_holder = st.empty()
     fps_time = time.time()
     frame_idx = 0
-
-    # initialize safe dfs
-    class_df = pd.DataFrame(columns=["Class", "Count"])
-    dir_df = pd.DataFrame(columns=["Direction", "Count"])
 
     while True:
         ret, frame = cap.read()
@@ -339,27 +330,6 @@ if start_btn:
             ["Down → Up", direction_counts["down_to_up"]],
         ], columns=["Direction", "Count"]))
 
-        # === Live charts (safe rendering) ===
-        class_df = pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"])
-        dir_df = pd.DataFrame([
-            ["Left → Right", direction_counts["left_to_right"]],
-            ["Right → Left", direction_counts["right_to_left"]],
-            ["Up → Down", direction_counts["up_to_down"]],
-            ["Down → Up", direction_counts["down_to_up"]],
-        ], columns=["Direction", "Count"])
-
-        if not class_df.empty and class_df["Count"].sum() > 0:
-            fig_classes = px.bar(class_df, x="Class", y="Count",
-                                 title="Vehicle Class Counts", text="Count")
-            fig_classes.update_traces(textposition="outside")
-            live_chart_cls.plotly_chart(fig_classes, use_container_width=True, key=f"class_chart_{frame_idx}")
-
-        if not dir_df.empty and dir_df["Count"].sum() > 0:
-            fig_dirs = px.bar(dir_df, x="Direction", y="Count",
-                              title="Direction Counts", text="Count")
-            fig_dirs.update_traces(textposition="outside")
-            live_chart_dir.plotly_chart(fig_dirs, use_container_width=True, key=f"dir_chart_{frame_idx}")
-
         # === FPS overlay ===
         if fps_display:
             now = time.time()
@@ -376,27 +346,8 @@ if start_btn:
     total = sum(direction_counts.values())
     st.metric("Grand Total", total)
 
-    # === Final summary charts (safe rendering) ===
-    st.subheader("📊 Final Charts")
-
-    if not class_df.empty and class_df["Count"].sum() > 0:
-        fig_classes = px.bar(class_df, x="Class", y="Count", title="Vehicle Class Counts", text="Count")
-        fig_classes.update_traces(textposition="outside")
-        st.plotly_chart(fig_classes, use_container_width=True, key="final_class_chart")
-
-        fig_pie = px.pie(class_df, values="Count", names="Class", title="Vehicle Share (%)", hole=0.3)
-        st.plotly_chart(fig_pie, use_container_width=True, key="final_pie_chart")
-
-    if not dir_df.empty and dir_df["Count"].sum() > 0:
-        fig_dirs = px.bar(dir_df, x="Direction", y="Count", title="Direction Counts", text="Count")
-        fig_dirs.update_traces(textposition="outside")
-        st.plotly_chart(fig_dirs, use_container_width=True, key="final_dir_chart")
-
-    # Events log
     if events:
         df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
         st.dataframe(df, use_container_width=True)
         csv = df.to_csv(index=False).encode("utf-8")
         st.download_button("⬇️ Download Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
-    else:
-        st.info("No crossing events were recorded.")
