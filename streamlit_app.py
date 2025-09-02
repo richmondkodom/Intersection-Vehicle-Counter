@@ -13,7 +13,6 @@ from collections import deque, defaultdict
 # App setup & style
 ###############################################################################
 st.set_page_config(page_title="🚗 Vehicle Counter", layout="wide")
-st.set_option("server.maxUploadSize", 1000)  # allow up to 1GB uploads
 
 # === Custom Background Styling ===
 page_bg = """
@@ -256,7 +255,7 @@ def detect_vehicles(frame, conf_thresh=0.2, nms_thresh=0.4, target_classes=None,
 ###############################################################################
 with st.sidebar:
     st.header("⚙️ Settings")
-    source = st.radio("Source", ["Upload Video", "Local File", "Webcam"], index=0)
+    source = st.radio("Source", ["Upload Video", "Webcam"], index=0)
     conf_thresh = st.slider("Detection confidence", 0.1, 0.9, 0.20, 0.05)
     nms_thresh = st.slider("NMS threshold", 0.1, 0.9, 0.45, 0.05)
     input_size = st.select_slider("Model input size", options=[320, 416, 512, 608], value=416)
@@ -277,16 +276,10 @@ with st.sidebar:
     fps_display = st.checkbox("Show FPS", value=True)
 
 uploaded_video = None
-local_video_path = None
 cap = None
 
 if source == "Upload Video":
-    uploaded_video = st.file_uploader("Upload a video (≤1GB)", type=["mp4", "mov", "avi", "mkv"])
-elif source == "Local File":
-    local_file = st.file_uploader("Pick a local video file", type=["mp4", "mov", "avi", "mkv"])
-    if local_file is not None:
-        local_video_path = local_file.name
-        st.success(f"Selected: {local_video_path}")
+    uploaded_video = st.file_uploader("Upload a video", type=["mp4", "mov", "avi", "mkv"])
 else:
     cam_index = st.number_input("Webcam index", value=0, step=1, min_value=0)
 
@@ -308,14 +301,7 @@ if start_btn:
         tfile = tempfile.NamedTemporaryFile(delete=False)
         tfile.write(uploaded_video.read())
         cap = cv2.VideoCapture(tfile.name)
-
-    elif source == "Local File":
-        if not local_video_path or not os.path.exists(local_video_path):
-            st.warning("Please provide a valid local video file.")
-            st.stop()
-        cap = cv2.VideoCapture(local_video_path)
-
-    else:  # Webcam
+    else:
         cap = cv2.VideoCapture(int(cam_index))
 
     if not cap.isOpened():
@@ -421,43 +407,26 @@ if start_btn:
             ["Down → Up", direction_counts["down_to_up"]],
         ], columns=["Direction", "Count"]))
 
+        # === FPS overlay ===
         if fps_display:
             now = time.time()
-            fps = 1.0 / (now - fps_time)
+            fps = 1.0 / max(1e-6, now - fps_time)
             fps_time = now
-            cv2.putText(frame, f"FPS: {fps:.1f}", (w - 120, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50,180,255), 2)
 
-        frame_holder.image(frame, channels="BGR")
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_holder.image(frame_rgb, channels="RGB")
 
     cap.release()
-    st.success("Video processing completed.")
+    frame_holder.empty()
+    st.success("✅ Finished Processing")
+    total = sum(direction_counts.values())
+    st.metric("Grand Total", total)
 
-    df_events = pd.DataFrame(events, columns=["Track ID", "Direction", "Class", "Frame", "Time"])
-    st.subheader("📊 All Events")
-    st.dataframe(df_events)
+    if events:
+        df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
+        st.dataframe(df, use_container_width=True)
 
-    # download CSV
-    csv = df_events.to_csv(index=False).encode("utf-8")
-    st.download_button("💾 Download CSV", csv, "vehicle_events.csv", "text/csv")
-
-    # summary table
-    st.subheader("📈 Summary Totals")
-    summary_data = []
-    for cls, cnt in class_totals.items():
-        summary_data.append([cls, cnt])
-    summary_df = pd.DataFrame(summary_data, columns=["Class", "Total"])
-    st.table(summary_df)
-
-    st.subheader("🧭 Direction Totals")
-    dir_df = pd.DataFrame([
-        ["Left → Right", direction_counts["left_to_right"]],
-        ["Right → Left", direction_counts["right_to_left"]],
-        ["Up → Down", direction_counts["up_to_down"]],
-        ["Down → Up", direction_counts["down_to_up"]],
-    ], columns=["Direction", "Total"])
-    st.table(dir_df)
-
-
-
-
+        csv = df.to_csv(index=False).encode()
+        st.download_button("📥 Download CSV", csv, "counts.csv", "text/csv")
