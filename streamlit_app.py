@@ -13,7 +13,7 @@ from collections import deque
 ###############################################################################
 # App setup & style
 ###############################################################################
-st.set_page_config(page_title="🚗 INTERSECTION VEHICLE COUNTER", layout="wide")
+st.set_page_config(page_title="🚗 Intersection Vehicle Counter", layout="wide")
 
 # === Custom Background Styling ===
 page_bg = """
@@ -68,7 +68,7 @@ page_bg = """
 """
 st.markdown(page_bg, unsafe_allow_html=True)
 
-st.title("🚗 People & Vehicle Movement Counter")
+st.title("🚗 Intersection Vehicle Counter")
 st.caption("Detecting crossings and showing live **East / West / North / South** stats with a friendly dashboard.")
 
 ###############################################################################
