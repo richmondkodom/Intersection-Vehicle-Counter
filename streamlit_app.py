@@ -58,7 +58,6 @@ if submit_btn:
             users[username] = hash_password(password)
             save_users(users)
             st.sidebar.success("Account created! Please login.")
-    
     elif auth_mode == "Login":
         if username in users and users[username] == hash_password(password):
             st.session_state["logged_in"] = True
@@ -66,7 +65,6 @@ if submit_btn:
             st.sidebar.success(f"Logged in as {username}")
         else:
             st.sidebar.error("Invalid username or password")
-    
     elif auth_mode == "Reset Password":
         if username in users:
             users[username] = hash_password(password)
@@ -286,53 +284,62 @@ if start_btn:
     direction_counts = {"left_to_right":0,"right_to_left":0,"up_to_down":0,"down_to_up":0}
     class_totals = {cls:0 for cls in selected_classes}
     events = []
-    history = {"frame":[],"East":[],"West":[],"South":[],"North":[]}
-    video_holder = st.empty(); dashboard_placeholder = st.empty(); sidebar_stats = st.sidebar.empty()
+    history = {"frame":[], "East":[], "West":[], "South":[], "North":[]}
+
+    video_holder = st.empty()
+    dashboard_placeholder = st.empty()
+    sidebar_stats = st.sidebar.empty()
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret: break
-        frame_idx += 1; h, w = frame.shape[:2]
-        h_line_y = int(h*h_ratio); v_line_x=int(w*v_ratio)
+        frame_idx += 1
+        h,w = frame.shape[:2]
+        h_line_y = int(h*h_ratio)
+        v_line_x = int(w*v_ratio)
         use_h = line_mode in ("Horizontal & Vertical","Horizontal only")
         use_v = line_mode in ("Horizontal & Vertical","Vertical only")
 
-        # Detect + track
-        dets = detect_objects(frame, conf_thresh, nms_thresh, set(selected_classes), input_size)
+        # Detect + Track
+        dets = detect_objects(frame, conf_thresh,nms_thresh,set(selected_classes),input_size)
         tracks = tracker.update(dets)
 
         # Draw lines
         if use_h: cv2.line(frame,(0,h_line_y),(w,h_line_y),(0,255,255),2)
         if use_v: cv2.line(frame,(v_line_x,0),(v_line_x,h),(255,255,0),2)
 
+        # Update counts
         for tid,(cx,cy,bw,bh,cname,conf) in tracks.items():
             tr = tracker.tracks[tid]
             if show_trace and len(tr.trace)>=2:
-                for i in range(1,len(tr.trace)):
-                    cv2.line(frame,tr.trace[i-1],tr.trace[i],(200,200,200),2)
+                for i in range(1,len(tr.trace)): cv2.line(frame,tr.trace[i-1],tr.trace[i],(200,200,200),2)
             if draw_boxes:
                 x=int(cx-bw/2); y=int(cy-bh/2)
                 cv2.rectangle(frame,(x,y),(x+bw,y+bh),(76,175,80),2)
             label=f"{cname} {int(conf*100)}%"
             if show_ids: label=f"ID {tid} | "+label
-            cv2.putText(frame,label,(int(cx-bw/2),max(10,int(y-8))),cv2.FONT_HERSHEY_SIMPLEX,0.6,(10,220,10),2)
+            cv2.putText(frame,label,(int(cx-bw/2),max(10,int(y-8))),
+                        cv2.FONT_HERSHEY_SIMPLEX,0.6,(10,220,10),2)
 
-            # Crossing logic
+            # Crossing checks
             if len(tr.trace)>=2:
-                px,py=tr.trace[-2]; dx=cx-px; dy=cy-py; event_time=time.strftime("%H:%M:%S", time.localtime())
+                px,py=tr.trace[-2]; dx=cx-px; dy=cy-py
+                event_time = time.strftime("%H:%M:%S", time.localtime())
                 if use_h and not tr.counted_crossings["h"]:
                     if (py<h_line_y<=cy) or (py>h_line_y>=cy):
                         if dy>0: direction_counts["up_to_down"]+=1; events.append((tid,"South",tr.cls,frame_idx,event_time))
                         else: direction_counts["down_to_up"]+=1; events.append((tid,"North",tr.cls,frame_idx,event_time))
-                        class_totals[tr.cls]=class_totals.get(tr.cls,0)+1; tr.counted_crossings["h"]=True
+                        class_totals[tr.cls]=class_totals.get(tr.cls,0)+1
+                        tr.counted_crossings["h"]=True
                 if use_v and not tr.counted_crossings["v"]:
                     if (px<v_line_x<=cx) or (px>v_line_x>=cx):
                         if dx>0: direction_counts["left_to_right"]+=1; events.append((tid,"East",tr.cls,frame_idx,event_time))
                         else: direction_counts["right_to_left"]+=1; events.append((tid,"West",tr.cls,frame_idx,event_time))
-                        class_totals[tr.cls]=class_totals.get(tr.cls,0)+1; tr.counted_crossings["v"]=True
+                        class_totals[tr.cls]=class_totals.get(tr.cls,0)+1
+                        tr.counted_crossings["v"]=True
 
         # History
-        if frame_idx % 10 == 0:
+        if frame_idx%10==0:
             history["frame"].append(frame_idx)
             history["East"].append(direction_counts["left_to_right"])
             history["West"].append(direction_counts["right_to_left"])
@@ -345,50 +352,56 @@ if start_btn:
             cv2.putText(frame,f"FPS: {fps:.1f}",(10,24),cv2.FONT_HERSHEY_SIMPLEX,0.7,(50,180,255),2)
 
         # Show frame
-        video_holder.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB", use_container_width=True)
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        video_holder.image(frame_rgb, channels="RGB", use_container_width=True)
 
         # Sidebar stats
         total_moves=sum(direction_counts.values())
-        sidebar_stats.write(f"""
-### Live Totals
-- **Total crossings:** {total_moves}
-- **East (L→R):** {direction_counts['left_to_right']}
-- **West (R→L):** {direction_counts['right_to_left']}
-- **South (U→D):** {direction_counts['up_to_down']}
-- **North (D→U):** {direction_counts['down_to_up']}
-""")
+        sidebar_stats.write(
+            f"""
+            ### Live Totals
+            - **Total crossings:** {total_moves}
+            - **East (L→R):** {direction_counts['left_to_right']}
+            - **West (R→L):** {direction_counts['right_to_left']}
+            - **South (U→D):** {direction_counts['up_to_down']}
+            - **North (D→U):** {direction_counts['down_to_up']}
+            """
+        )
 
         # Dashboard
         with dashboard_placeholder.container():
-            st.subheader("📊 Live
-        # Dashboard
-        with dashboard_placeholder.container():
-            st.subheader("📊 Live Direction Counts")
-            df_history = pd.DataFrame({
-                "Frame": history["frame"],
-                "East": history["East"],
-                "West": history["West"],
-                "South": history["South"],
-                "North": history["North"]
-            }).set_index("Frame")
+            st.subheader("📊 Live Movement Dashboard")
+            c1,c2,c3,c4=st.columns(4)
+            c1.metric("➡️ East",direction_counts["left_to_right"])
+            c2.metric("⬅️ West",direction_counts["right_to_left"])
+            c3.metric("⬇️ South",direction_counts["up_to_down"])
+            c4.metric("⬆️ North",direction_counts["down_to_up"])
 
-            if dashboard_view in ("Bar View", "Combined View"):
-                st.bar_chart(df_history.tail(1))  # Latest frame counts
+            if dashboard_view=="Bar View":
+                a,b=st.columns(2)
+                with a: st.bar_chart(pd.DataFrame.from_dict({"East":direction_counts["left_to_right"],"West":direction_counts["right_to_left"],"South":direction_counts["up_to_down"],"North":direction_counts["down_to_up"]}, orient="index", columns=["Count"]))
+                with b: st.bar_chart(pd.DataFrame.from_dict(class_totals, orient="index", columns=["Count"]))
+            elif dashboard_view=="Line View" and len(history["frame"])>1:
+                df_hist=pd.DataFrame(history).set_index("frame")
+                st.line_chart(df_hist)
+            elif dashboard_view=="Combined View":
+                a,b=st.columns(2)
+                with a: st.bar_chart(pd.DataFrame.from_dict({"East":direction_counts["left_to_right"],"West":direction_counts["right_to_left"],"South":direction_counts["up_to_down"],"North":direction_counts["down_to_up"]}, orient="index", columns=["Count"]))
+                if len(history["frame"])>1: st.line_chart(pd.DataFrame(history).set_index("frame"))
+                with b: st.bar_chart(pd.DataFrame.from_dict(class_totals, orient="index", columns=["Count"]))
+                if show_pies:
+                    render_pie(["East","West","South","North"], [direction_counts["left_to_right"],direction_counts["right_to_left"],direction_counts["up_to_down"],direction_counts["down_to_up"]], "Direction %")
+                    cls_sizes=[class_totals[c] for c in class_totals]; render_pie(list(class_totals.keys()), cls_sizes, "Class %") if sum(cls_sizes)>0 else None
 
-            if dashboard_view in ("Line View", "Combined View"):
-                st.line_chart(df_history)  # Trends over frames
-
-            if dashboard_view == "Combined View" and show_pies:
-                total_counts = [direction_counts["left_to_right"], direction_counts["right_to_left"],
-                                direction_counts["up_to_down"], direction_counts["down_to_up"]]
-                render_pie(["East","West","South","North"], total_counts, "Direction Distribution")
-
-    # After video ends
     cap.release()
-    st.success("✅ Video processing complete!")
+    st.success("✅ Finished Processing")
 
-    # Save CSV of events
+    # Summary & CSV
+    st.metric("Grand Total Crossings", sum(direction_counts.values()))
     if events:
-        df_events = pd.DataFrame(events, columns=["TrackID","Direction","Class","Frame","Time"])
-        st.download_button("💾 Download Events CSV", df_events.to_csv(index=False), "events.csv", "text/csv")
-
+        df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
+        st.dataframe(df, use_container_width=True)
+        csv = df.to_csv(index=False).encode()
+        st.download_button("📥 Download CSV", csv, "counts.csv", "text/csv")
+else:
+    st.info("Upload a video or select webcam, then click **Start**.")
