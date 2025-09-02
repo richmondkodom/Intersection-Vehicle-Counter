@@ -4,6 +4,3 @@ numpy
 pandas
 xlsxwriter
 Plotly
-collections
-
-
