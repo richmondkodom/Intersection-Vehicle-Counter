@@ -13,7 +13,7 @@ from collections import deque
 ###############################################################################
 # App setup & style
 ###############################################################################
-st.set_page_config(page_title="🚗 People & Vehicle Movement Counter", layout="wide")
+st.set_page_config(page_title="🚗 INTERSECTION VEHICLE COUNTER", layout="wide")
 
 # === Custom Background Styling ===
 page_bg = """
