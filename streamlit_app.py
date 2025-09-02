@@ -80,13 +80,15 @@ if not st.session_state["logged_in"]:
 # ===============================
 # Logout Button
 # ===============================
-if st.session_state["logged_in"]:
-    if st.sidebar.button("🚪 Logout"):
-        # Reset login session
-        st.session_state["logged_in"] = False
-        st.session_state["user"] = None
-        # Redirect to "login page" by rerunning app
-        st.experimental_rerun()
+if st.session_state.get("logged_in", False):
+    # Place logout in sidebar
+    with st.sidebar:
+        if st.button("🚪 Logout"):
+            st.session_state["logged_in"] = False
+            st.session_state["user"] = None
+            # Safely rerun the app
+            st.experimental_rerun()
+
 
 
 # ===============================
