@@ -17,16 +17,42 @@ st.set_page_config(page_title="🚗 Vehicle Counter", layout="wide")
 # === Custom Background Styling ===
 page_bg = """
 <style>
+/* Main app background */
 [data-testid="stAppViewContainer"] {
     background-color: #f4f6f9; /* clean light background */
     background-size: cover;
 }
+
+/* Sidebar background and text */
 [data-testid="stSidebar"] {
     background-color: #1e1e2f; /* dark sidebar */
     color: white;
 }
+
+/* Force all text inside sidebar to be white */
+[data-testid="stSidebar"] * {
+    color: white !important;
+}
+
+/* Transparent header */
 [data-testid="stHeader"] {
     background: rgba(0,0,0,0);
+}
+
+/* Buttons */
+.stButton > button, .stDownloadButton > button {
+    background-color: #2563eb;   /* blue button */
+    color: white;
+    border-radius: 8px;
+    border: none;
+    padding: 0.6em 1.2em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.3s;
+}
+.stButton > button:hover, .stDownloadButton > button:hover {
+    background-color: #1e40af;   /* darker blue on hover */
+    color: #f1f5f9;
 }
 </style>
 """
