@@ -10,6 +10,31 @@ import pandas as pd
 from collections import deque, defaultdict
 
 ###############################################################################
+# App setup & style
+###############################################################################
+st.set_page_config(page_title="🚗 Vehicle Counter", layout="wide")
+
+# === Custom Background Styling ===
+page_bg = """
+<style>
+[data-testid="stAppViewContainer"] {
+    background-color: #f4f6f9; /* clean light background */
+    background-size: cover;
+}
+[data-testid="stSidebar"] {
+    background-color: #1e1e2f; /* dark sidebar */
+    color: white;
+}
+[data-testid="stHeader"] {
+    background: rgba(0,0,0,0);
+}
+</style>
+"""
+st.markdown(page_bg, unsafe_allow_html=True)
+
+st.title("🚗 Intersection Vehicle Counter")
+
+###############################################################################
 # Auto-download YOLOv4-tiny (weights/cfg) + COCO labels on first run
 ###############################################################################
 MODEL_DIR = "models"
@@ -174,11 +199,8 @@ def detect_vehicles(frame, conf_thresh=0.2, nms_thresh=0.4, target_classes=None,
 ###############################################################################
 # Streamlit UI
 ###############################################################################
-st.set_page_config(page_title="Vehicle Counter", layout="wide")
-st.title("🚗 Intersection Vehicle Counter")
-
 with st.sidebar:
-    st.header("Settings")
+    st.header("⚙️ Settings")
     source = st.radio("Source", ["Upload Video", "Webcam"], index=0)
     conf_thresh = st.slider("Detection confidence", 0.1, 0.9, 0.20, 0.05)
     nms_thresh = st.slider("NMS threshold", 0.1, 0.9, 0.45, 0.05)
@@ -237,7 +259,8 @@ if start_btn:
     fps_time = time.time()
     frame_idx = 0
 
-    while True:
+    # safer loop
+    while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
@@ -342,7 +365,8 @@ if start_btn:
         frame_holder.image(frame_rgb, channels="RGB")
 
     cap.release()
-    st.success("Finished.")
+    frame_holder.empty()
+    st.success("✅ Finished Processing")
     total = sum(direction_counts.values())
     st.metric("Grand Total", total)
 
