@@ -361,4 +361,34 @@ if start_btn:
         # Dashboard
         with dashboard_placeholder.container():
             st.subheader("📊 Live
+        # Dashboard
+        with dashboard_placeholder.container():
+            st.subheader("📊 Live Direction Counts")
+            df_history = pd.DataFrame({
+                "Frame": history["frame"],
+                "East": history["East"],
+                "West": history["West"],
+                "South": history["South"],
+                "North": history["North"]
+            }).set_index("Frame")
+
+            if dashboard_view in ("Bar View", "Combined View"):
+                st.bar_chart(df_history.tail(1))  # Latest frame counts
+
+            if dashboard_view in ("Line View", "Combined View"):
+                st.line_chart(df_history)  # Trends over frames
+
+            if dashboard_view == "Combined View" and show_pies:
+                total_counts = [direction_counts["left_to_right"], direction_counts["right_to_left"],
+                                direction_counts["up_to_down"], direction_counts["down_to_up"]]
+                render_pie(["East","West","South","North"], total_counts, "Direction Distribution")
+
+    # After video ends
+    cap.release()
+    st.success("✅ Video processing complete!")
+
+    # Save CSV of events
+    if events:
+        df_events = pd.DataFrame(events, columns=["TrackID","Direction","Class","Frame","Time"])
+        st.download_button("💾 Download Events CSV", df_events.to_csv(index=False), "events.csv", "text/csv")
 
