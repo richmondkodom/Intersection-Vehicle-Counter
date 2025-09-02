@@ -5,5 +5,4 @@ pandas
 xlsxwriter
 Plotly
 matplotlib
-hashlib
 json
