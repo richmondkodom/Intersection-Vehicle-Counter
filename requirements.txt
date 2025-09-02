@@ -4,4 +4,6 @@ numpy
 pandas
 xlsxwriter
 Plotly
-
+collections
+deque
+defaultdict
