@@ -7,29 +7,29 @@ import tempfile
 import numpy as np
 import streamlit as st
 import pandas as pd
-from collections import deque, defaultdict
+import matplotlib.pyplot as plt
+from collections import deque
 
 ###############################################################################
 # App setup & style
 ###############################################################################
-st.set_page_config(page_title="🚗 Vehicle Counter", layout="wide")
+st.set_page_config(page_title="🚗 People & Vehicle Movement Counter", layout="wide")
 
 # === Custom Background Styling ===
 page_bg = """
 <style>
 /* Main app background */
 [data-testid="stAppViewContainer"] {
-    background-color: #f4f6f9; /* clean light background */
-    background-size: cover;
+    background-color: #f8fafc; /* very light gray */
 }
 
 /* Sidebar background */
 [data-testid="stSidebar"] {
-    background-color: #1e1e2f; /* dark sidebar */
+    background-color: #0f172a; /* slate-900 */
 }
 
 /* Force ALL text in sidebar to white */
-[data-testid="stSidebar"], 
+[data-testid="stSidebar"],
 [data-testid="stSidebar"] * {
     color: #ffffff !important;
     fill: #ffffff !important;
@@ -42,54 +42,37 @@ page_bg = """
 
 /* Buttons */
 .stButton > button, .stDownloadButton > button {
-    background-color: #2563eb;   /* blue button */
+    background-color: #2563eb;
     color: white !important;
-    border-radius: 8px;
-    border: none;
-    padding: 0.6em 1.2em;
-    font-weight: 600;
+    border-radius: 12px;
+    border: 0;
+    padding: 0.75em 1.25em;
+    font-weight: 700;
+    font-size: 16px;
     cursor: pointer;
-    transition: 0.3s;
+    transition: 0.2s ease-in-out;
+    box-shadow: 0px 6px 20px rgba(37, 99, 235, 0.35);
 }
 .stButton > button:hover, .stDownloadButton > button:hover {
-    background-color: #1e40af;   /* darker blue on hover */
-    color: #f1f5f9 !important;
+    background-color: #1e40af;
+    transform: translateY(-2px);
 }
 
-/* === Sliders === */
-.stSlider > div > div > div[data-testid="stTickBar"] {
-    background: #374151; /* dark gray track */
-}
-.stSlider > div > div > div > div[data-testid="stThumbValue"] {
-    color: #ffffff !important; /* white value label */
-}
-.stSlider > div > div > div > div[role="slider"] {
-    background-color: #2563eb; /* blue knob */
-    border: 2px solid #1e40af;
-}
-.stSlider > div > div > div > div[role="slider"]:hover {
-    background-color: #1e40af; /* darker blue on hover */
-}
+/* Metrics styling */
+[data-testid="stMetricValue"] { font-size: 30px !important; font-weight: 800; }
+[data-testid="stMetricLabel"] { font-size: 14px !important; font-weight: 600; color: #64748b !important; }
 
-/* === Radio buttons & checkboxes === */
-.stRadio div[role="radiogroup"] > label > div:first-child,
-.stCheckbox > label > div:first-child {
-    border: 2px solid #2563eb !important;   /* blue border */
-    background-color: #1e1e2f !important;   /* match sidebar */
-}
-.stRadio div[role="radiogroup"] > label > div[aria-checked="true"],
-.stCheckbox > label > div[aria-checked="true"] {
-    background-color: #2563eb !important;   /* filled blue when active */
-    border: 2px solid #1e40af !important;
-}
+/* Card feel for containers */
+.block-container { padding-top: 1rem; }
 </style>
 """
 st.markdown(page_bg, unsafe_allow_html=True)
 
-st.title("🚗 Intersection Vehicle Counter")
+st.title("🚗 People & Vehicle Movement Counter")
+st.caption("Detecting crossings and showing live **East / West / North / South** stats with a friendly dashboard.")
 
 ###############################################################################
-# Auto-download YOLOv4-tiny (weights/cfg) + COCO labels on first run
+# Auto-download YOLOv4-tiny (weights/cfg) + COCO labels
 ###############################################################################
 MODEL_DIR = "models"
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -122,7 +105,8 @@ ensure_model_files()
 with open(FILES["names"], "r") as f:
     CLASSES = [c.strip() for c in f.readlines()]
 
-VEHICLE_CLASSES = {"car", "bus", "truck", "motorbike", "bicycle"}
+# Include "person" so we track people too
+DETECTABLE_CLASSES = {"person", "car", "bus", "truck", "motorbike", "bicycle"}
 
 ###############################################################################
 # Load YOLO network
@@ -138,7 +122,7 @@ net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 layer_names = net.getLayerNames()
 try:
     output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
-except:
+except Exception:
     output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
 
 ###############################################################################
@@ -154,7 +138,7 @@ class Track:
         self.last_seen = time.time()
 
 class CentroidTracker:
-    def __init__(self, max_distance=50, max_age=2.0):
+    def __init__(self, max_distance=60, max_age=2.0):
         self.next_id = 1
         self.tracks = {}
         self.max_distance = max_distance
@@ -167,8 +151,9 @@ class CentroidTracker:
     def update(self, detections):
         if detections is None:
             return {}
-
         now = time.time()
+
+        # Remove stale tracks
         to_del = [tid for tid, t in self.tracks.items() if (now - t.last_seen) > self.max_age]
         for tid in to_del:
             del self.tracks[tid]
@@ -179,13 +164,14 @@ class CentroidTracker:
         for det in detections:
             dcx, dcy, w, h, cname, conf = det
             best_id, best_dist = None, 1e9
+
             for tid, tr in self.tracks.items():
-                if tid in assigned:
+                if tid in assigned: 
                     continue
                 dist = self._euclidean((dcx, dcy), tr.trace[-1])
                 if dist < best_dist:
-                    best_dist = dist
-                    best_id = tid
+                    best_dist, best_id = dist, tid
+
             if best_id is not None and best_dist <= self.max_distance:
                 tr = self.tracks[best_id]
                 tr.trace.append((dcx, dcy))
@@ -195,28 +181,26 @@ class CentroidTracker:
                 assigned.add(best_id)
                 out[best_id] = (dcx, dcy, w, h, tr.cls or cname, conf)
             else:
-                tid = self.next_id
-                self.next_id += 1
+                tid = self.next_id; self.next_id += 1
                 tr = Track(tid, (dcx, dcy))
                 tr.cls = cname
                 tr.last_seen = now
                 self.tracks[tid] = tr
                 assigned.add(tid)
                 out[tid] = (dcx, dcy, w, h, cname, conf)
-
         return out
 
 ###############################################################################
-# Vehicle detection
+# Detection
 ###############################################################################
-def detect_vehicles(frame, conf_thresh=0.2, nms_thresh=0.4, target_classes=None, input_size=416):
+def detect_objects(frame, conf_thresh=0.2, nms_thresh=0.4, target_classes=None, input_size=416):
     h, w = frame.shape[:2]
     blob = cv2.dnn.blobFromImage(frame, 1/255.0, (input_size, input_size), swapRB=True, crop=False)
     net.setInput(blob)
     try:
         outs = net.forward(output_layers)
     except cv2.error as e:
-        st.error(f"Error during forward pass: {e}")
+        st.error(f"Forward pass error: {e}")
         return []
 
     boxes, confs, class_ids = [], [], []
@@ -251,7 +235,7 @@ def detect_vehicles(frame, conf_thresh=0.2, nms_thresh=0.4, target_classes=None,
     return detections
 
 ###############################################################################
-# Streamlit UI
+# Sidebar UI
 ###############################################################################
 with st.sidebar:
     st.header("⚙️ Settings")
@@ -259,21 +243,29 @@ with st.sidebar:
     conf_thresh = st.slider("Detection confidence", 0.1, 0.9, 0.20, 0.05)
     nms_thresh = st.slider("NMS threshold", 0.1, 0.9, 0.45, 0.05)
     input_size = st.select_slider("Model input size", options=[320, 416, 512, 608], value=416)
-    max_distance = st.slider("Tracker max match distance (px)", 10, 150, 60, 5)
-    max_age = st.slider("Tracker max age (sec)", 1.0, 5.0, 2.0, 0.5)
+    max_distance = st.slider("Tracker match distance (px)", 10, 200, 60, 5)
+    max_age = st.slider("Tracker max age (sec)", 0.5, 5.0, 2.0, 0.5)
 
     st.markdown("**Count Lines**")
-    line_mode = st.selectbox("Which lines to use for counting?", ["Horizontal & Vertical", "Horizontal only", "Vertical only"], index=0)
-    h_ratio = st.slider("Horizontal line position (height ratio)", 0.1, 0.9, 0.5, 0.05)
-    v_ratio = st.slider("Vertical line position (width ratio)", 0.1, 0.9, 0.5, 0.05)
+    line_mode = st.selectbox("Counting lines", ["Horizontal & Vertical", "Horizontal only", "Vertical only"], index=0)
+    h_ratio = st.slider("Horizontal line (height ratio)", 0.1, 0.9, 0.5, 0.05)
+    v_ratio = st.slider("Vertical line (width ratio)", 0.1, 0.9, 0.5, 0.05)
 
     st.markdown("**Classes**")
-    selected_classes = st.multiselect("Vehicle classes to detect", sorted(list(VEHICLE_CLASSES)), default=list(VEHICLE_CLASSES))
+    selected_classes = st.multiselect("Detect classes", sorted(list(DETECTABLE_CLASSES)), default=list(DETECTABLE_CLASSES))
 
     draw_boxes = st.checkbox("Draw boxes", value=True)
     show_ids = st.checkbox("Show track IDs", value=True)
     show_trace = st.checkbox("Draw motion trails", value=True)
     fps_display = st.checkbox("Show FPS", value=True)
+
+    st.markdown("### 📊 Dashboard View")
+    dashboard_view = st.radio(
+        "Choose view",
+        ["Bar View", "Line View", "Combined View"],
+        index=0
+    )
+    show_pies = st.checkbox("Show pie charts (Combined View)", value=True)
 
 uploaded_video = None
 cap = None
@@ -285,20 +277,41 @@ else:
 
 start_btn = st.button("▶️ Start")
 
-direction_counts = {"left_to_right":0, "right_to_left":0, "up_to_down":0, "down_to_up":0}
+###############################################################################
+# State & placeholders
+###############################################################################
+direction_counts = {"left_to_right": 0, "right_to_left": 0, "up_to_down": 0, "down_to_up": 0}
 class_totals = {cls: 0 for cls in selected_classes}
-events = []  # store all events
+events = []  # (track_id, direction, class, frame, timestamp)
 
-# === Sidebar live stats placeholders ===
-stats_placeholder = st.sidebar.empty()
-direction_placeholder = st.sidebar.empty()
+# History for line chart
+history = {"frame": [], "East": [], "West": [], "South": [], "North": []}
 
+# Live placeholders
+video_holder = st.empty()
+dashboard_placeholder = st.empty()
+sidebar_stats = st.sidebar.empty()
+
+###############################################################################
+# Helpers
+###############################################################################
+def render_pie(labels, sizes, title):
+    fig, ax = plt.subplots()
+    ax.pie(sizes, labels=labels, autopct=lambda p: f"{p:.0f}%" if p >= 1 else "", startangle=90)
+    ax.axis('equal')
+    ax.set_title(title)
+    st.pyplot(fig)
+    plt.close(fig)
+
+###############################################################################
+# Main
+###############################################################################
 if start_btn:
     if source == "Upload Video":
         if uploaded_video is None:
             st.warning("Please upload a video first.")
             st.stop()
-        tfile = tempfile.NamedTemporaryFile(delete=False)
+        tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         tfile.write(uploaded_video.read())
         cap = cv2.VideoCapture(tfile.name)
     else:
@@ -309,11 +322,9 @@ if start_btn:
         st.stop()
 
     tracker = CentroidTracker(max_distance=max_distance, max_age=max_age)
-    frame_holder = st.empty()
     fps_time = time.time()
     frame_idx = 0
 
-    # safer loop
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -321,112 +332,184 @@ if start_btn:
         frame_idx += 1
         h, w = frame.shape[:2]
 
+        # Line positions
         h_line_y = int(h * h_ratio)
         v_line_x = int(w * v_ratio)
         use_h = line_mode in ("Horizontal & Vertical", "Horizontal only")
         use_v = line_mode in ("Horizontal & Vertical", "Vertical only")
 
-        dets = detect_vehicles(frame, conf_thresh, nms_thresh, set(selected_classes), input_size)
+        # Detect + track
+        dets = detect_objects(frame, conf_thresh, nms_thresh, set(selected_classes), input_size)
         tracks = tracker.update(dets)
 
+        # Draw counting lines
         if use_h:
             cv2.line(frame, (0, h_line_y), (w, h_line_y), (0, 255, 255), 2)
         if use_v:
             cv2.line(frame, (v_line_x, 0), (v_line_x, h), (255, 255, 0), 2)
 
+        # Update tracks & counts
         for tid, (cx, cy, bw, bh, cname, conf) in tracks.items():
             tr = tracker.tracks[tid]
             if show_trace and len(tr.trace) >= 2:
                 for i in range(1, len(tr.trace)):
-                    cv2.line(frame, tr.trace[i-1], tr.trace[i], (200,200,200), 2)
+                    cv2.line(frame, tr.trace[i-1], tr.trace[i], (200, 200, 200), 2)
             if draw_boxes:
                 x = int(cx - bw/2); y = int(cy - bh/2)
-                cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0,255,0), 2)
+                cv2.rectangle(frame, (x, y), (x + bw, y + bh), (76, 175, 80), 2)
+
             label = f"{cname} {int(conf*100)}%"
             if show_ids:
                 label = f"ID {tid} | " + label
-            cv2.putText(frame, label, (int(cx - bw/2), int(max(0,y-8))),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (10,220,10), 2)
+            cv2.putText(frame, label, (int(cx - bw/2), max(10, int(y-8))),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (10, 220, 10), 2)
 
-            # Check crossings
+            # Crossing checks
             if len(tr.trace) >= 2:
                 px, py = tr.trace[-2]
                 dx = cx - px
                 dy = cy - py
                 event_time = time.strftime("%H:%M:%S", time.localtime())
 
+                # Horizontal line: North/South
                 if use_h and not tr.counted_crossings["h"]:
                     if (py < h_line_y <= cy) or (py > h_line_y >= cy):
                         if dy > 0:
                             direction_counts["up_to_down"] += 1
-                            events.append((tid, "up_to_down", tr.cls, frame_idx, event_time))
+                            events.append((tid, "South", tr.cls, frame_idx, event_time))
                         else:
                             direction_counts["down_to_up"] += 1
-                            events.append((tid, "down_to_up", tr.cls, frame_idx, event_time))
-                        class_totals[tr.cls] += 1
+                            events.append((tid, "North", tr.cls, frame_idx, event_time))
+                        class_totals[tr.cls] = class_totals.get(tr.cls, 0) + 1
                         tr.counted_crossings["h"] = True
 
+                # Vertical line: East/West
                 if use_v and not tr.counted_crossings["v"]:
                     if (px < v_line_x <= cx) or (px > v_line_x >= cx):
                         if dx > 0:
                             direction_counts["left_to_right"] += 1
-                            events.append((tid, "left_to_right", tr.cls, frame_idx, event_time))
+                            events.append((tid, "East", tr.cls, frame_idx, event_time))
                         else:
                             direction_counts["right_to_left"] += 1
-                            events.append((tid, "right_to_left", tr.cls, frame_idx, event_time))
-                        class_totals[tr.cls] += 1
+                            events.append((tid, "West", tr.cls, frame_idx, event_time))
+                        class_totals[tr.cls] = class_totals.get(tr.cls, 0) + 1
                         tr.counted_crossings["v"] = True
 
-        # === Overlay totals on video ===
-        overlay_lines = []
-        overlay_lines.append(" | ".join([f"{cls.capitalize()}: {cnt}" for cls, cnt in class_totals.items()]))
-        overlay_lines.append(f"Total: {sum(class_totals.values())}")
-        overlay_lines.append(
-            f"L→R: {direction_counts['left_to_right']} | R→L: {direction_counts['right_to_left']}"
-        )
-        overlay_lines.append(
-            f"U→D: {direction_counts['up_to_down']} | D→U: {direction_counts['down_to_up']}"
-        )
+        # History every 10 frames
+        if frame_idx % 10 == 0:
+            history["frame"].append(frame_idx)
+            history["East"].append(direction_counts["left_to_right"])
+            history["West"].append(direction_counts["right_to_left"])
+            history["South"].append(direction_counts["up_to_down"])
+            history["North"].append(direction_counts["down_to_up"])
 
-        y0 = 40
-        for i, line in enumerate(overlay_lines):
-            y = y0 + i * 25
-            cv2.putText(frame, line, (10, y),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                        (255, 255, 255), 2, cv2.LINE_AA)
-
-        # === Live sidebar stats update ===
-        stats_placeholder.write("### 🚘 Vehicle Class Counts")
-        stats_placeholder.write(pd.DataFrame(list(class_totals.items()), columns=["Class", "Count"]))
-
-        direction_placeholder.write("### 🧭 Direction Counts")
-        direction_placeholder.write(pd.DataFrame([
-            ["Left → Right", direction_counts["left_to_right"]],
-            ["Right → Left", direction_counts["right_to_left"]],
-            ["Up → Down", direction_counts["up_to_down"]],
-            ["Down → Up", direction_counts["down_to_up"]],
-        ], columns=["Direction", "Count"]))
-
-        # === FPS overlay ===
+        # FPS overlay
         if fps_display:
             now = time.time()
             fps = 1.0 / max(1e-6, now - fps_time)
             fps_time = now
-            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (50,180,255), 2)
+            cv2.putText(frame, f"FPS: {fps:.1f}", (10, 24),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (50, 180, 255), 2)
 
+        # Show frame
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame_holder.image(frame_rgb, channels="RGB")
+        video_holder.image(frame_rgb, channels="RGB", use_container_width=True)
+
+        # Sidebar live stats
+        total_moves = sum(direction_counts.values())
+        sidebar_stats.write(
+            f"""
+            ### Live Totals
+            - **Total crossings:** {total_moves}
+            - **East (L→R):** {direction_counts['left_to_right']}
+            - **West (R→L):** {direction_counts['right_to_left']}
+            - **South (U→D):** {direction_counts['up_to_down']}
+            - **North (D→U):** {direction_counts['down_to_up']}
+            """
+        )
+
+        # === Live Dashboard ===
+        with dashboard_placeholder.container():
+            st.subheader("📊 Live Movement & Class Dashboard")
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("➡️ East", direction_counts["left_to_right"])
+            c2.metric("⬅️ West", direction_counts["right_to_left"])
+            c3.metric("⬇️ South", direction_counts["up_to_down"])
+            c4.metric("⬆️ North", direction_counts["down_to_up"])
+
+            if dashboard_view == "Bar View":
+                a, b = st.columns(2)
+                with a:
+                    st.markdown("**🧭 Direction Counts**")
+                    st.bar_chart(pd.DataFrame.from_dict({
+                        "East": direction_counts["left_to_right"],
+                        "West": direction_counts["right_to_left"],
+                        "South": direction_counts["up_to_down"],
+                        "North": direction_counts["down_to_up"],
+                    }, orient="index", columns=["Count"]))
+                with b:
+                    st.markdown("**🚘 Class Counts**")
+                    st.bar_chart(pd.DataFrame.from_dict(class_totals, orient="index", columns=["Count"]))
+
+            elif dashboard_view == "Line View":
+                if len(history["frame"]) > 1:
+                    st.markdown("**📈 Direction Trends Over Time**")
+                    df_hist = pd.DataFrame(history).set_index("frame")
+                    st.line_chart(df_hist)
+
+            elif dashboard_view == "Combined View":
+                top = st.container()
+                with top:
+                    a, b = st.columns(2)
+                    with a:
+                        st.markdown("**🧭 Direction Counts**")
+                        st.bar_chart(pd.DataFrame.from_dict({
+                            "East": direction_counts["left_to_right"],
+                            "West": direction_counts["right_to_left"],
+                            "South": direction_counts["up_to_down"],
+                            "North": direction_counts["down_to_up"],
+                        }, orient="index", columns=["Count"]))
+                        if len(history["frame"]) > 1:
+                            st.markdown("**📈 Direction Trends**")
+                            df_hist = pd.DataFrame(history).set_index("frame")
+                            st.line_chart(df_hist)
+                    with b:
+                        st.markdown("**🚘 Class Counts**")
+                        st.bar_chart(pd.DataFrame.from_dict(class_totals, orient="index", columns=["Count"]))
+
+                        if show_pies:
+                            # Pie charts for distribution
+                            st.markdown("**🥧 Direction Distribution**")
+                            dir_labels = ["East", "West", "South", "North"]
+                            dir_sizes = [
+                                direction_counts["left_to_right"],
+                                direction_counts["right_to_left"],
+                                direction_counts["up_to_down"],
+                                direction_counts["down_to_up"],
+                            ]
+                            render_pie(dir_labels, dir_sizes, "Direction %")
+
+                            st.markdown("**🥧 Class Distribution**")
+                            cls_labels = list(class_totals.keys())
+                            cls_sizes = [class_totals[c] for c in cls_labels]
+                            if sum(cls_sizes) > 0:
+                                render_pie(cls_labels, cls_sizes, "Class %")
 
     cap.release()
-    frame_holder.empty()
     st.success("✅ Finished Processing")
-    total = sum(direction_counts.values())
-    st.metric("Grand Total", total)
 
+    # ===== Summary / Export =====
+    total = sum(direction_counts.values())
+    st.metric("Grand Total Crossings", total)
+
+    # Events table & CSV
     if events:
-        df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
+        df = pd.DataFrame(events, columns=["track_id", "direction", "class", "frame", "timestamp"])
+        st.markdown("### 📄 Events")
         st.dataframe(df, use_container_width=True)
 
         csv = df.to_csv(index=False).encode()
         st.download_button("📥 Download CSV", csv, "counts.csv", "text/csv")
+else:
+    st.info("Upload a video or select webcam, then click **Start**.")
