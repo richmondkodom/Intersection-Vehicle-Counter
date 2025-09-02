@@ -82,6 +82,15 @@ page_bg = """
     background-color: #2563eb !important;   /* filled blue when active */
     border: 2px solid #1e40af !important;
 }
+
+/* === Fix selectbox === */
+.stSelectbox div[data-baseweb="select"] {
+    background-color: #2d2d3f !important;  /* dark background */
+    border-radius: 6px;
+}
+.stSelectbox div[data-baseweb="select"] span {
+    color: #ffffff !important;  /* white text */
+}
 </style>
 """
 st.markdown(page_bg, unsafe_allow_html=True)
