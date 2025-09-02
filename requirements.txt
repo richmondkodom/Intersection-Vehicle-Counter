@@ -5,5 +5,5 @@ pandas
 xlsxwriter
 Plotly
 collections
-deque
+
 
