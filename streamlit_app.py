@@ -23,15 +23,16 @@ page_bg = """
     background-size: cover;
 }
 
-/* Sidebar background and text */
+/* Sidebar background */
 [data-testid="stSidebar"] {
     background-color: #1e1e2f; /* dark sidebar */
-    color: white;
 }
 
-/* Force all text inside sidebar to be white */
+/* Force ALL text in sidebar to white */
+[data-testid="stSidebar"], 
 [data-testid="stSidebar"] * {
-    color: white !important;
+    color: #ffffff !important;
+    fill: #ffffff !important;
 }
 
 /* Transparent header */
@@ -42,7 +43,7 @@ page_bg = """
 /* Buttons */
 .stButton > button, .stDownloadButton > button {
     background-color: #2563eb;   /* blue button */
-    color: white;
+    color: white !important;
     border-radius: 8px;
     border: none;
     padding: 0.6em 1.2em;
@@ -52,7 +53,34 @@ page_bg = """
 }
 .stButton > button:hover, .stDownloadButton > button:hover {
     background-color: #1e40af;   /* darker blue on hover */
-    color: #f1f5f9;
+    color: #f1f5f9 !important;
+}
+
+/* === Sliders === */
+.stSlider > div > div > div[data-testid="stTickBar"] {
+    background: #374151; /* dark gray track */
+}
+.stSlider > div > div > div > div[data-testid="stThumbValue"] {
+    color: #ffffff !important; /* white value label */
+}
+.stSlider > div > div > div > div[role="slider"] {
+    background-color: #2563eb; /* blue knob */
+    border: 2px solid #1e40af;
+}
+.stSlider > div > div > div > div[role="slider"]:hover {
+    background-color: #1e40af; /* darker blue on hover */
+}
+
+/* === Radio buttons & checkboxes === */
+.stRadio div[role="radiogroup"] > label > div:first-child,
+.stCheckbox > label > div:first-child {
+    border: 2px solid #2563eb !important;   /* blue border */
+    background-color: #1e1e2f !important;   /* match sidebar */
+}
+.stRadio div[role="radiogroup"] > label > div[aria-checked="true"],
+.stCheckbox > label > div[aria-checked="true"] {
+    background-color: #2563eb !important;   /* filled blue when active */
+    border: 2px solid #1e40af !important;
 }
 </style>
 """
@@ -399,5 +427,6 @@ if start_btn:
     if events:
         df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
         st.dataframe(df, use_container_width=True)
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download Log (CSV)", csv, file_name="vehicle_counts.csv", mime="text/csv")
+
+        csv = df.to_csv(index=False).encode()
+        st.download_button("📥 Download CSV", csv, "counts.csv", "text/csv")
