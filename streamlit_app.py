@@ -77,6 +77,17 @@ if submit_btn:
 if not st.session_state["logged_in"]:
     st.warning("Please login to access the vehicle counter app.")
     st.stop()
+# ===============================
+# Logout Button
+# ===============================
+if st.session_state["logged_in"]:
+    if st.sidebar.button("🚪 Logout"):
+        # Reset login session
+        st.session_state["logged_in"] = False
+        st.session_state["user"] = None
+        # Redirect to "login page" by rerunning app
+        st.experimental_rerun()
+
 
 # ===============================
 # App setup & style
