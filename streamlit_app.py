@@ -77,17 +77,7 @@ if submit_btn:
 if not st.session_state["logged_in"]:
     st.warning("Please login to access the vehicle counter app.")
     st.stop()
-# ===============================
-# Logout Button
-# ===============================
-if st.session_state.get("logged_in", False):
-    # Place logout in sidebar
-    with st.sidebar:
-        if st.button("🚪 Logout"):
-            st.session_state["logged_in"] = False
-            st.session_state["user"] = None
-            # Safely rerun the app
-        st.experimental_rerun()
+
 # ===============================
 # App setup & style
 # ===============================
@@ -414,4 +404,4 @@ if start_btn:
         csv = df.to_csv(index=False).encode()
         st.download_button("📥 Download CSV", csv, "counts.csv", "text/csv")
 else:
-    st.info("Upload a video or select webcam, then click **Start**.")
+    st.info("Upload a video or select webcam, then click **Start**.")     
