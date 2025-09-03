@@ -38,53 +38,56 @@ if "user" not in st.session_state:
     st.session_state["user"] = None
 
 # ===============================
-# Sidebar: Authentication OR Logout
+# Sidebar: Authentication
 # ===============================
-with st.sidebar:
-    st.header("🔐 User Authentication")
+st.sidebar.header("🔐 User Authentication")
+auth_mode = st.sidebar.selectbox("Mode", ["Login", "Register", "Reset Password"])
+username = st.sidebar.text_input("Username")
+password = st.sidebar.text_input("Password", type="password")
+submit_btn = st.sidebar.button("Submit")
 
-    if not st.session_state.get("logged_in", False):
-        # Show auth form only when not logged in
-        auth_mode = st.selectbox("Mode", ["Login", "Register", "Reset Password"])
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit_btn = st.button("Submit")
+users = load_users()
 
-        users = load_users()
+if submit_btn:
+    if auth_mode == "Register":
+        if username in users:
+            st.sidebar.error("Username already exists")
+        elif len(password) < 4:
+            st.sidebar.error("Password too short")
+        else:
+            users[username] = hash_password(password)
+            save_users(users)
+            st.sidebar.success("Account created! Please login.")
+    elif auth_mode == "Login":
+        if username in users and users[username] == hash_password(password):
+            st.session_state["logged_in"] = True
+            st.session_state["user"] = username
+            st.sidebar.success(f"Logged in as {username}")
+        else:
+            st.sidebar.error("Invalid username or password")
+    elif auth_mode == "Reset Password":
+        if username in users:
+            users[username] = hash_password(password)
+            save_users(users)
+            st.sidebar.success("Password reset successfully!")
+        else:
+            st.sidebar.error("Username not found")
 
-        if submit_btn:
-            if auth_mode == "Register":
-                if username in users:
-                    st.error("Username already exists")
-                elif len(password) < 4:
-                    st.error("Password too short")
-                else:
-                    users[username] = hash_password(password)
-                    save_users(users)
-                    st.success("Account created! Please login.")
-            elif auth_mode == "Login":
-                if username in users and users[username] == hash_password(password):
-                    st.session_state["logged_in"] = True
-                    st.session_state["user"] = username
-                    st.success(f"Logged in as {username}")
-                    st.experimental_rerun()
-                else:
-                    st.error("Invalid username or password")
-            elif auth_mode == "Reset Password":
-                if username in users:
-                    users[username] = hash_password(password)
-                    save_users(users)
-                    st.success("Password reset successfully!")
-                else:
-                    st.error("Username not found")
-    else:
-        # Show only logout if logged in
-        st.markdown(f"**Logged in as:** {st.session_state['user']}")
+# Require login
+if not st.session_state["logged_in"]:
+    st.warning("Please login to access the vehicle counter app.")
+    st.stop()
+# ===============================
+# Logout Button
+# ===============================
+if st.session_state.get("logged_in", False):
+    # Place logout in sidebar
+    with st.sidebar:
         if st.button("🚪 Logout"):
             st.session_state["logged_in"] = False
             st.session_state["user"] = None
-            st.experimental_rerun()
-
+            # Safely rerun the app
+        st.experimental_rerun()
 # ===============================
 # App setup & style
 # ===============================
