@@ -36,37 +36,6 @@ if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "user" not in st.session_state:
     st.session_state["user"] = None
-
-# ===============================
-# Sidebar: Authentication OR Logout
-# ===============================
-with st.sidebar:
-    st.header("🔐 Authentication")
-
-    if not st.session_state.get("logged_in", False):
-        # Login form (only username, password, submit)
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit_btn = st.button("Login")
-
-        users = load_users()
-
-        if submit_btn:
-            if username in users and users[username] == hash_password(password):
-                st.session_state["logged_in"] = True
-                st.session_state["user"] = username
-                st.success(f"✅ Logged in as {username}")
-                st.experimental_rerun()
-            else:
-                st.error("❌ Invalid username or password")
-    else:
-        # Logged-in view: only logout
-        st.markdown(f"**👤 Logged in as:** `{st.session_state['user']}`")
-        if st.button("🚪 Logout"):
-            st.session_state["logged_in"] = False
-            st.session_state["user"] = None
-            st.experimental_rerun()
-
 # ===============================
 # App setup & style
 # ===============================
