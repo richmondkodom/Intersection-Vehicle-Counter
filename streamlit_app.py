@@ -50,7 +50,7 @@ def login_page():
             st.session_state["logged_in"] = True
             st.session_state["user"] = username
             st.success(f"Welcome back, {username}!")
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("Invalid username or password")
 
@@ -96,7 +96,7 @@ def logout_button():
     if st.sidebar.button("🚪 Logout"):
         st.session_state["logged_in"] = False
         st.session_state["user"] = None
-        st.experimental_rerun()
+        st.rerun()
 
 # ===============================
 # App setup & style
