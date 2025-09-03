@@ -87,7 +87,7 @@ if st.session_state.get("logged_in", False):
             st.session_state["logged_in"] = False
             st.session_state["user"] = None
             # Safely rerun the app
-            st.experimental_rerun()
+           st.rerun()
 # ===============================
 # App setup & style
 # ===============================
