@@ -106,10 +106,8 @@ def update_role(username, new_role):
     c.execute("UPDATE users SET role=? WHERE username=?", (new_role, username))
     conn.commit()
     conn.close()
-
 # Initialize DB
 init_db()
-
 # ===============================
 # Session state
 # ===============================
