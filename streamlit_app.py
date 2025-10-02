@@ -10,32 +10,115 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from collections import deque
 import hashlib
-import json
+import sqlite3
+from datetime import datetime
 
 # ===============================
-# User Authentication Setup
+# Password Hashing
 # ===============================
-USERS_FILE = "users.json"
-if not os.path.exists(USERS_FILE):
-    with open(USERS_FILE, "w") as f:
-        json.dump({}, f)
-
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
-def load_users():
-    with open(USERS_FILE, "r") as f:
-        return json.load(f)
+# ===============================
+# Database Setup
+# ===============================
+DB_FILE = "users.db"
 
-def save_users(users):
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f)
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            email TEXT UNIQUE,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL,
+            created_at TEXT,
+            last_login TEXT
+        )
+    """)
+    conn.commit()
 
+    # Ensure default admin exists
+    c.execute("SELECT * FROM users WHERE username=?", ("admin",))
+    if not c.fetchone():
+        c.execute("INSERT INTO users VALUES (?,?,?,?,?,?)",
+                  ("admin", "admin@example.com", hash_password("admin123"),
+                   "admin", datetime.now().strftime("%Y-%m-%d %H:%M:%S"), None))
+        conn.commit()
+    conn.close()
+
+def add_user(username, email, password_hash, role="user"):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    try:
+        c.execute("INSERT INTO users VALUES (?,?,?,?,?,?)",
+                  (username, email, password_hash, role,
+                   datetime.now().strftime("%Y-%m-%d %H:%M:%S"), None))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+    finally:
+        conn.close()
+
+def get_user(username):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE username=?", (username,))
+    row = c.fetchone()
+    conn.close()
+    return row
+
+def update_password(username, new_hash):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE users SET password=? WHERE username=?", (new_hash, username))
+    conn.commit()
+    conn.close()
+
+def update_last_login(username):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE users SET last_login=? WHERE username=?",
+              (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), username))
+    conn.commit()
+    conn.close()
+
+def get_all_users():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT username, email, role, created_at, last_login FROM users")
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+def delete_user(username):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM users WHERE username=?", (username,))
+    conn.commit()
+    conn.close()
+
+def update_role(username, new_role):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE users SET role=? WHERE username=?", (new_role, username))
+    conn.commit()
+    conn.close()
+
+# Initialize DB
+init_db()
+
+# ===============================
 # Session state
+# ===============================
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "user" not in st.session_state:
     st.session_state["user"] = None
+if "role" not in st.session_state:
+    st.session_state["role"] = None
 
 # ===============================
 # Authentication Pages
@@ -45,10 +128,12 @@ def login_page():
     username = st.text_input("Username", key="login_username")
     password = st.text_input("Password", type="password", key="login_password")
     if st.button("Login"):
-        users = load_users()
-        if username and username in users and users[username] == hash_password(password):
+        user = get_user(username)
+        if user and user[2] == hash_password(password):  # user[2] = password
             st.session_state["logged_in"] = True
             st.session_state["user"] = username
+            st.session_state["role"] = user[3]  # user[3] = role
+            update_last_login(username)
             st.success(f"Welcome back, {username}!")
             st.rerun()
         else:
@@ -57,51 +142,94 @@ def login_page():
 def register_page():
     st.subheader("🆕 Register")
     username = st.text_input("Choose a username", key="reg_username")
+    email = st.text_input("Enter email", key="reg_email")
     password = st.text_input("Choose a password", type="password", key="reg_password")
     confirm = st.text_input("Confirm password", type="password", key="reg_confirm")
+
     if st.button("Register"):
-        users = load_users()
-        if not username:
-            st.warning("Please choose a username")
-        elif username in users:
-            st.warning("Username already exists")
+        if not username or not email:
+            st.warning("Please fill all fields")
         elif password != confirm:
             st.warning("Passwords do not match")
         elif len(password) < 4:
             st.warning("Password must be at least 4 characters")
         else:
-            users[username] = hash_password(password)
-            save_users(users)
-            st.success("Account created! You can now log in.")
+            password_hash = hash_password(password)
+            success = add_user(username, email, password_hash, "user")
+            if success:
+                st.success("✅ Account created! You can now log in.")
+            else:
+                st.error("⚠️ Username or email already exists")
 
 def reset_password_page():
     st.subheader("🔄 Reset Password")
     username = st.text_input("Username", key="reset_username")
     new_password = st.text_input("New password", type="password", key="reset_new")
     confirm = st.text_input("Confirm new password", type="password", key="reset_confirm")
+
     if st.button("Reset"):
-        users = load_users()
-        if not username:
-            st.error("Please enter your username")
-        elif username not in users:
-            st.error("Username not found")
+        user = get_user(username)
+        if not user:
+            st.error("⚠️ Username not found")
         elif new_password != confirm:
             st.error("Passwords do not match")
         else:
-            users[username] = hash_password(new_password)
-            save_users(users)
-            st.success("Password updated successfully! Please log in.")
+            update_password(username, hash_password(new_password))
+            st.success("✅ Password updated successfully! Please log in.")
 
 def logout_button():
     if st.sidebar.button("🚪 Logout"):
         st.session_state["logged_in"] = False
         st.session_state["user"] = None
+        st.session_state["role"] = None
+        st.rerun()
+
+# ===============================
+# Admin Dashboard
+# ===============================
+def admin_dashboard():
+    st.title("👨‍💼 Admin Dashboard - User Management")
+
+    users = get_all_users()
+    df = pd.DataFrame(users, columns=["Username", "Email", "Role", "Created At", "Last Login"])
+    st.dataframe(df, use_container_width=True)
+
+    # --- Delete User ---
+    st.subheader("🗑️ Delete User")
+    user_to_delete = st.selectbox("Select a user to delete", [u[0] for u in users if u[0] != "admin"])
+    if st.button("Delete User"):
+        delete_user(user_to_delete)
+        st.success(f"✅ User '{user_to_delete}' deleted successfully!")
+        st.rerun()
+
+    # --- Reset User Password ---
+    st.subheader("🔑 Reset User Password")
+    user_to_reset = st.selectbox("Select a user to reset password", [u[0] for u in users if u[0] != "admin"])
+    new_pass = st.text_input("Enter new password", type="password", key="admin_reset_pass")
+    confirm_pass = st.text_input("Confirm new password", type="password", key="admin_reset_confirm")
+    if st.button("Reset Password"):
+        if new_pass != confirm_pass:
+            st.error("Passwords do not match")
+        elif len(new_pass) < 4:
+            st.error("Password must be at least 4 characters")
+        else:
+            update_password(user_to_reset, hash_password(new_pass))
+            st.success(f"✅ Password for '{user_to_reset}' reset successfully!")
+
+    # --- Role Management ---
+    st.subheader("⚡ Promote/Demote User")
+    user_to_change = st.selectbox("Select a user to change role", [u[0] for u in users if u[0] not in ["admin", st.session_state["user"]]])
+    new_role = st.radio("Set role", ["user", "admin"], horizontal=True)
+    if st.button("Update Role"):
+        update_role(user_to_change, new_role)
+        st.success(f"✅ User '{user_to_change}' role updated to {new_role}!")
         st.rerun()
 
 # ===============================
 # App setup & style
 # ===============================
 st.set_page_config(page_title="🚗 Intersection Vehicle Counter", layout="wide")
+
 page_bg = """
 <style>
 [data-testid="stAppViewContainer"] { background-color: #f8fafc; }
@@ -136,6 +264,17 @@ if not st.session_state["logged_in"]:
     st.stop()
 else:
     logout_button()
+
+# ===============================
+# Role-based Views
+# ===============================
+if st.session_state["role"] == "admin":
+    admin_dashboard()
+else:
+    st.title("🚗 Intersection Vehicle Counter")
+    st.caption(f"Welcome, **{st.session_state['user']}**! Detecting crossings and showing live **East / West / North / South** stats.")
+
+    # 🚦 Your YOLO/Tracker + dashboard code goes here...
 
 # ===============================
 # 🚗 Main Vehicle Counter App
