@@ -195,16 +195,6 @@ else:
 st.title("🚗 Intersection Vehicle Counter")
 st.caption(f"Welcome, **{st.session_state['user']}**! Detecting crossings and showing live **East / West / North / South** stats.")
 
-# 🚦 Your vehicle detection + dashboard code continues here...
-# (I kept all the YOLO/Tracker code same as before, only replaced auth with DB)
-
-
-# ===============================
-# 🚗 Main Vehicle Counter App
-# ===============================
-st.title("🚗 Intersection Vehicle Counter")
-st.caption(f"Welcome, **{st.session_state['user']}**! Detecting crossings and showing live **East / West / North / South** stats.")
-
 # -------------------------------
 # Model Setup
 # -------------------------------
