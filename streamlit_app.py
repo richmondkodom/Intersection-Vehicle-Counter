@@ -10,35 +10,16 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from collections import deque
 import hashlib
-import sqlite3
-from datetime import datetime, timedelta
 import json
 
 # ===============================
-# Files & Constants
+# User Authentication Setup
 # ===============================
 USERS_FILE = "users.json"
-SETTINGS_FILE = "settings.json"
-MAX_FAILED_ATTEMPTS = 5
-MODEL_DIR = "models"
-
 if not os.path.exists(USERS_FILE):
     with open(USERS_FILE, "w") as f:
-        json.dump({"admin": {"password": hashlib.sha256("admin123".encode()).hexdigest(),
-                             "email": "",
-                             "locked": False,
-                             "failed_attempts": 0,
-                             "lock_time": None}}, f)
+        json.dump({}, f)
 
-if not os.path.exists(SETTINGS_FILE):
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump({"lock_minutes": 15, "lock_enabled": True}, f)
-
-os.makedirs(MODEL_DIR, exist_ok=True)
-
-# ===============================
-# Helper Functions
-# ===============================
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -48,74 +29,9 @@ def load_users():
 
 def save_users(users):
     with open(USERS_FILE, "w") as f:
-        json.dump(users, f, indent=4)
+        json.dump(users, f)
 
-def load_settings():
-    with open(SETTINGS_FILE, "r") as f:
-        return json.load(f)
-
-def save_settings(settings):
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(settings, f, indent=4)
-
-def log_event(user, action, details=""):
-    with open("admin_logs.txt", "a") as f:
-        f.write(f"{datetime.now()} | {user} | {action} | {details}\n")
-
-# ===============================
-# Authentication
-# ===============================
-def authenticate(username, password):
-    users = load_users()
-    settings = load_settings()
-    LOCK_ENABLED = settings.get("lock_enabled", True)
-    LOCK_DURATION = timedelta(minutes=settings.get("lock_minutes", 15))
-
-    if username in users:
-        user = users[username]
-
-        # Lock check
-        if LOCK_ENABLED and user.get("locked", False):
-            lock_time = user.get("lock_time")
-            if lock_time:
-                lock_time = datetime.fromisoformat(lock_time)
-                if datetime.now() - lock_time >= LOCK_DURATION:
-                    # Auto unlock
-                    user["locked"] = False
-                    user["failed_attempts"] = 0
-                    user["lock_time"] = None
-                    save_users(users)
-                    log_event(username, "AUTO_UNLOCK", "Unlocked after cooldown")
-                else:
-                    remaining = LOCK_DURATION - (datetime.now() - lock_time)
-                    mins, secs = divmod(int(remaining.total_seconds()), 60)
-                    return False, f"⏳ Account locked. Try again in {mins}m {secs}s."
-
-        # Correct password
-        if user["password"] == hash_password(password):
-            user["failed_attempts"] = 0
-            save_users(users)
-            return True, "✅ Login successful"
-
-        # Wrong password
-        if LOCK_ENABLED:
-            user["failed_attempts"] = user.get("failed_attempts", 0) + 1
-            if user["failed_attempts"] >= MAX_FAILED_ATTEMPTS:
-                user["locked"] = True
-                user["lock_time"] = datetime.now().isoformat()
-                save_users(users)
-                log_event(username, "AUTO_LOCK", "Too many failed attempts")
-                return False, f"🚨 Account locked for {LOCK_DURATION.seconds // 60} minutes."
-            save_users(users)
-            return False, f"❌ Wrong password. Attempts left: {MAX_FAILED_ATTEMPTS - user['failed_attempts']}"
-        else:
-            return False, "❌ Wrong password."
-
-    return False, "❌ Invalid username or password"
-
-# ===============================
-# Session State
-# ===============================
+# Session state
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "user" not in st.session_state:
@@ -129,188 +45,103 @@ def login_page():
     username = st.text_input("Username", key="login_username")
     password = st.text_input("Password", type="password", key="login_password")
     if st.button("Login"):
-        ok, msg = authenticate(username, password)
-        if ok:
+        users = load_users()
+        if username and username in users and users[username] == hash_password(password):
             st.session_state["logged_in"] = True
             st.session_state["user"] = username
-            st.success(f"Welcome, {username}!")
-            st.experimental_rerun()
+            st.success(f"Welcome back, {username}!")
+            st.rerun()
         else:
-            st.error(msg)
+            st.error("Invalid username or password")
 
 def register_page():
     st.subheader("🆕 Register")
-    username = st.text_input("Username", key="reg_username")
-    email = st.text_input("Email (optional)", key="reg_email")
-    password = st.text_input("Password", type="password", key="reg_password")
-    confirm = st.text_input("Confirm Password", type="password", key="reg_confirm")
+    username = st.text_input("Choose a username", key="reg_username")
+    password = st.text_input("Choose a password", type="password", key="reg_password")
+    confirm = st.text_input("Confirm password", type="password", key="reg_confirm")
     if st.button("Register"):
         users = load_users()
         if not username:
-            st.warning("Enter username")
+            st.warning("Please choose a username")
         elif username in users:
-            st.warning("Username exists")
+            st.warning("Username already exists")
         elif password != confirm:
             st.warning("Passwords do not match")
         elif len(password) < 4:
-            st.warning("Password too short")
+            st.warning("Password must be at least 4 characters")
         else:
-            users[username] = {
-                "password": hash_password(password),
-                "email": email,
-                "locked": False,
-                "failed_attempts": 0,
-                "lock_time": None
-            }
+            users[username] = hash_password(password)
             save_users(users)
-            st.success("Account created!")
+            st.success("Account created! You can now log in.")
 
 def reset_password_page():
     st.subheader("🔄 Reset Password")
     username = st.text_input("Username", key="reset_username")
-    new_password = st.text_input("New Password", type="password", key="reset_new")
-    confirm = st.text_input("Confirm New Password", type="password", key="reset_confirm")
+    new_password = st.text_input("New password", type="password", key="reset_new")
+    confirm = st.text_input("Confirm new password", type="password", key="reset_confirm")
     if st.button("Reset"):
         users = load_users()
         if not username:
-            st.error("Enter username")
+            st.error("Please enter your username")
         elif username not in users:
-            st.error("User not found")
+            st.error("Username not found")
         elif new_password != confirm:
             st.error("Passwords do not match")
         else:
-            users[username]["password"] = hash_password(new_password)
+            users[username] = hash_password(new_password)
             save_users(users)
-            st.success("Password updated!")
+            st.success("Password updated successfully! Please log in.")
 
 def logout_button():
     if st.sidebar.button("🚪 Logout"):
         st.session_state["logged_in"] = False
         st.session_state["user"] = None
-        st.experimental_rerun()
+        st.rerun()
 
 # ===============================
-# Admin Dashboard
+# App setup & style
 # ===============================
-def admin_dashboard():
-    st.title("🛠️ Admin Dashboard")
-    users = load_users()
-    settings = load_settings()
-
-    # --- Delete User ---
-    with st.expander("❌ Delete User"):
-        target = st.selectbox("Select user to delete", [u for u in users.keys() if u != "admin"])
-        if st.button("Delete User"):
-            del users[target]
-            save_users(users)
-            log_event("ADMIN", "DELETE_USER", target)
-            st.success(f"User '{target}' deleted")
-
-    # --- Lock/Unlock User ---
-    with st.expander("🔒 Lock/Unlock User"):
-        target_user = st.selectbox("Select user", [u for u in users.keys() if u != "admin"], key="lock_user")
-        if target_user:
-            locked_status = users[target_user].get("locked", False)
-            st.write(f"Current Status: {'🔒 Locked' if locked_status else '✅ Active'}")
-
-            if not locked_status:
-                if st.button("Lock Account"):
-                    users[target_user]["locked"] = True
-                    users[target_user]["lock_time"] = datetime.now().isoformat()
-                    save_users(users)
-                    log_event("ADMIN", "LOCK_ACCOUNT", target_user)
-                    st.success(f"User '{target_user}' locked")
-            else:
-                if st.button("Unlock Account"):
-                    users[target_user]["locked"] = False
-                    users[target_user]["failed_attempts"] = 0
-                    users[target_user]["lock_time"] = None
-                    save_users(users)
-                    log_event("ADMIN", "UNLOCK_ACCOUNT", target_user)
-                    st.success(f"User '{target_user}' unlocked")
-
-    # --- Lock Duration & Enable/Disable ---
-    with st.expander("⏳ Lockout Settings"):
-        lock_minutes = st.number_input("Lock duration (minutes)", min_value=1, max_value=180,
-                                       value=settings.get("lock_minutes", 15))
-        lock_enabled = st.checkbox("Enable Auto Lockout", value=settings.get("lock_enabled", True))
-        if st.button("Update Lock Settings"):
-            settings["lock_minutes"] = lock_minutes
-            settings["lock_enabled"] = lock_enabled
-            save_settings(settings)
-            status = "enabled" if lock_enabled else "disabled"
-            log_event("ADMIN", "LOCKOUT_TOGGLE", f"Auto lockout {status}")
-            st.success(f"Lockout system {status}, duration {lock_minutes} minutes")
+st.set_page_config(page_title="🚗 Intersection Vehicle Counter", layout="wide")
+page_bg = """
+<style>
+[data-testid="stAppViewContainer"] { background-color: #f8fafc; }
+[data-testid="stSidebar"] { background-color: #0f172a; }
+[data-testid="stSidebar"], [data-testid="stSidebar"] * { color: #ffffff !important; fill: #ffffff !important; }
+[data-testid="stHeader"] { background: rgba(0,0,0,0); }
+.stButton > button, .stDownloadButton > button {
+    background-color: #2563eb; color: white !important; border-radius: 12px; border: 0;
+    padding: 0.75em 1.25em; font-weight: 700; font-size: 16px; cursor: pointer;
+    transition: 0.2s ease-in-out; box-shadow: 0px 6px 20px rgba(37, 99, 235, 0.35);
+}
+.stButton > button:hover, .stDownloadButton > button:hover { background-color: #1e40af; transform: translateY(-2px); }
+[data-testid="stMetricValue"] { font-size: 30px !important; font-weight: 800; }
+[data-testid="stMetricLabel"] { font-size: 14px !important; font-weight: 600; color: #64748b !important; }
+.block-container { padding-top: 1rem; }
+</style>
+"""
+st.markdown(page_bg, unsafe_allow_html=True)
 
 # ===============================
-# Vehicle Counter App
+# Authentication Flow
 # ===============================
-def vehicle_counter_app():
-    st.title("🚗 Intersection Vehicle Counter")
-    st.caption(f"Welcome, **{st.session_state['user']}**! Detecting crossings and showing live stats.")
-    
-    # --- Model Setup ---
-    URLS = {
-        "weights": "https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v4_pre/yolov4-tiny.weights",
-        "cfg": "https://raw.githubusercontent.com/AlexeyAB/darknet/master/cfg/yolov4-tiny.cfg",
-        "names": "https://raw.githubusercontent.com/pjreddie/darknet/master/data/coco.names",
-    }
-    FILES = {
-        "weights": os.path.join(MODEL_DIR, "yolov4-tiny.weights"),
-        "cfg": os.path.join(MODEL_DIR, "yolov4-tiny.cfg"),
-        "names": os.path.join(MODEL_DIR, "coco.names"),
-    }
-    for k, path in FILES.items():
-        if not os.path.exists(path):
-            st.info(f"Downloading {k}...")
-            urllib.request.urlretrieve(URLS[k], path)
-
-    with open(FILES["names"], "r") as f:
-        CLASSES = [c.strip() for c in f.readlines()]
-    DETECTABLE_CLASSES = {"person", "car", "bus", "truck", "motorbike", "bicycle"}
-
-    net = cv2.dnn.readNetFromDarknet(FILES["cfg"], FILES["weights"])
-    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-    layer_names = net.getLayerNames()
-    try:
-        output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
-    except:
-        output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
-
-    st.info("✅ Vehicle counter ready. You can now integrate full tracking/detection logic here.")
-
-# ===============================
-# Main Flow
-# ===============================
-st.set_page_config(page_title="Vehicle Counter + Auth", layout="wide")
-
 if not st.session_state["logged_in"]:
     st.sidebar.title("Authentication")
-    choice = st.sidebar.radio("Choose", ["Login", "Register", "Reset Password"])
-    if choice == "Login":
+    menu = st.sidebar.radio("Choose", ["Login", "Register", "Reset Password"])
+    if menu == "Login":
         login_page()
-    elif choice == "Register":
+    elif menu == "Register":
         register_page()
-    elif choice == "Reset Password":
+    elif menu == "Reset Password":
         reset_password_page()
     st.stop()
 else:
     logout_button()
-    if st.session_state["user"] == "admin":
-        admin_dashboard()
-    else:
-        vehicle_counter_app()
-
 
 # ===============================
 # 🚗 Main Vehicle Counter App
 # ===============================
 st.title("🚗 Intersection Vehicle Counter")
 st.caption(f"Welcome, **{st.session_state['user']}**! Detecting crossings and showing live **East / West / North / South** stats.")
-
-# 🚦 Your vehicle detection + dashboard code continues here...
-# (I kept all the YOLO/Tracker code same as before, only replaced auth with DB)
 
 # -------------------------------
 # Model Setup
