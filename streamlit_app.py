@@ -12,14 +12,46 @@ from collections import deque
 import hashlib
 import json
 
+import os
+import cv2
+import time
+import math
+import urllib.request
+import tempfile
+import numpy as np
+import streamlit as st
+import pandas as pd
+import matplotlib.pyplot as plt
+from collections import deque
+import hashlib
+import json
+from datetime import datetime, timedelta
+
 # ===============================
-# User Authentication Setup
+# Files & Constants
 # ===============================
 USERS_FILE = "users.json"
+SETTINGS_FILE = "settings.json"
+MAX_FAILED_ATTEMPTS = 5
+MODEL_DIR = "models"
+
 if not os.path.exists(USERS_FILE):
     with open(USERS_FILE, "w") as f:
-        json.dump({}, f)
+        json.dump({"admin": {"password": hashlib.sha256("admin123".encode()).hexdigest(),
+                             "email": "",
+                             "locked": False,
+                             "failed_attempts": 0,
+                             "lock_time": None}}, f)
 
+if not os.path.exists(SETTINGS_FILE):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump({"lock_minutes": 15, "lock_enabled": True}, f)
+
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+# ===============================
+# Helper Functions
+# ===============================
 def hash_password(password):
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -29,9 +61,74 @@ def load_users():
 
 def save_users(users):
     with open(USERS_FILE, "w") as f:
-        json.dump(users, f)
+        json.dump(users, f, indent=4)
 
-# Session state
+def load_settings():
+    with open(SETTINGS_FILE, "r") as f:
+        return json.load(f)
+
+def save_settings(settings):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(settings, f, indent=4)
+
+def log_event(user, action, details=""):
+    with open("admin_logs.txt", "a") as f:
+        f.write(f"{datetime.now()} | {user} | {action} | {details}\n")
+
+# ===============================
+# Authentication
+# ===============================
+def authenticate(username, password):
+    users = load_users()
+    settings = load_settings()
+    LOCK_ENABLED = settings.get("lock_enabled", True)
+    LOCK_DURATION = timedelta(minutes=settings.get("lock_minutes", 15))
+
+    if username in users:
+        user = users[username]
+
+        # Lock check
+        if LOCK_ENABLED and user.get("locked", False):
+            lock_time = user.get("lock_time")
+            if lock_time:
+                lock_time = datetime.fromisoformat(lock_time)
+                if datetime.now() - lock_time >= LOCK_DURATION:
+                    # Auto unlock
+                    user["locked"] = False
+                    user["failed_attempts"] = 0
+                    user["lock_time"] = None
+                    save_users(users)
+                    log_event(username, "AUTO_UNLOCK", "Unlocked after cooldown")
+                else:
+                    remaining = LOCK_DURATION - (datetime.now() - lock_time)
+                    mins, secs = divmod(int(remaining.total_seconds()), 60)
+                    return False, f"⏳ Account locked. Try again in {mins}m {secs}s."
+
+        # Correct password
+        if user["password"] == hash_password(password):
+            user["failed_attempts"] = 0
+            save_users(users)
+            return True, "✅ Login successful"
+
+        # Wrong password
+        if LOCK_ENABLED:
+            user["failed_attempts"] = user.get("failed_attempts", 0) + 1
+            if user["failed_attempts"] >= MAX_FAILED_ATTEMPTS:
+                user["locked"] = True
+                user["lock_time"] = datetime.now().isoformat()
+                save_users(users)
+                log_event(username, "AUTO_LOCK", "Too many failed attempts")
+                return False, f"🚨 Account locked for {LOCK_DURATION.seconds // 60} minutes."
+            save_users(users)
+            return False, f"❌ Wrong password. Attempts left: {MAX_FAILED_ATTEMPTS - user['failed_attempts']}"
+        else:
+            return False, "❌ Wrong password."
+
+    return False, "❌ Invalid username or password"
+
+# ===============================
+# Session State
+# ===============================
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "user" not in st.session_state:
@@ -45,97 +142,271 @@ def login_page():
     username = st.text_input("Username", key="login_username")
     password = st.text_input("Password", type="password", key="login_password")
     if st.button("Login"):
-        users = load_users()
-        if username and username in users and users[username] == hash_password(password):
+        ok, msg = authenticate(username, password)
+        if ok:
             st.session_state["logged_in"] = True
             st.session_state["user"] = username
-            st.success(f"Welcome back, {username}!")
-            st.rerun()
+            st.success(f"Welcome, {username}!")
+            st.experimental_rerun()
         else:
-            st.error("Invalid username or password")
+            st.error(msg)
 
 def register_page():
     st.subheader("🆕 Register")
-    username = st.text_input("Choose a username", key="reg_username")
-    password = st.text_input("Choose a password", type="password", key="reg_password")
-    confirm = st.text_input("Confirm password", type="password", key="reg_confirm")
+    username = st.text_input("Username", key="reg_username")
+    email = st.text_input("Email (optional)", key="reg_email")
+    password = st.text_input("Password", type="password", key="reg_password")
+    confirm = st.text_input("Confirm Password", type="password", key="reg_confirm")
     if st.button("Register"):
         users = load_users()
         if not username:
-            st.warning("Please choose a username")
+            st.warning("Enter username")
         elif username in users:
-            st.warning("Username already exists")
+            st.warning("Username exists")
         elif password != confirm:
             st.warning("Passwords do not match")
         elif len(password) < 4:
-            st.warning("Password must be at least 4 characters")
+            st.warning("Password too short")
         else:
-            users[username] = hash_password(password)
+            users[username] = {
+                "password": hash_password(password),
+                "email": email,
+                "locked": False,
+                "failed_attempts": 0,
+                "lock_time": None
+            }
             save_users(users)
-            st.success("Account created! You can now log in.")
+            st.success("Account created!")
 
 def reset_password_page():
     st.subheader("🔄 Reset Password")
     username = st.text_input("Username", key="reset_username")
-    new_password = st.text_input("New password", type="password", key="reset_new")
-    confirm = st.text_input("Confirm new password", type="password", key="reset_confirm")
+    new_password = st.text_input("New Password", type="password", key="reset_new")
+    confirm = st.text_input("Confirm New Password", type="password", key="reset_confirm")
     if st.button("Reset"):
         users = load_users()
         if not username:
-            st.error("Please enter your username")
+            st.error("Enter username")
         elif username not in users:
-            st.error("Username not found")
+            st.error("User not found")
         elif new_password != confirm:
             st.error("Passwords do not match")
         else:
-            users[username] = hash_password(new_password)
+            users[username]["password"] = hash_password(new_password)
             save_users(users)
-            st.success("Password updated successfully! Please log in.")
+            st.success("Password updated!")
 
 def logout_button():
     if st.sidebar.button("🚪 Logout"):
         st.session_state["logged_in"] = False
         st.session_state["user"] = None
-        st.rerun()
+        st.experimental_rerun()
 
 # ===============================
-# App setup & style
+# Admin Dashboard
 # ===============================
-st.set_page_config(page_title="🚗 Intersection Vehicle Counter", layout="wide")
-page_bg = """
-<style>
-[data-testid="stAppViewContainer"] { background-color: #f8fafc; }
-[data-testid="stSidebar"] { background-color: #0f172a; }
-[data-testid="stSidebar"], [data-testid="stSidebar"] * { color: #ffffff !important; fill: #ffffff !important; }
-[data-testid="stHeader"] { background: rgba(0,0,0,0); }
-.stButton > button, .stDownloadButton > button {
-    background-color: #2563eb; color: white !important; border-radius: 12px; border: 0;
-    padding: 0.75em 1.25em; font-weight: 700; font-size: 16px; cursor: pointer;
-    transition: 0.2s ease-in-out; box-shadow: 0px 6px 20px rgba(37, 99, 235, 0.35);
-}
-.stButton > button:hover, .stDownloadButton > button:hover { background-color: #1e40af; transform: translateY(-2px); }
-[data-testid="stMetricValue"] { font-size: 30px !important; font-weight: 800; }
-[data-testid="stMetricLabel"] { font-size: 14px !important; font-weight: 600; color: #64748b !important; }
-.block-container { padding-top: 1rem; }
-</style>
-"""
-st.markdown(page_bg, unsafe_allow_html=True)
+def admin_dashboard():
+    st.title("🛠️ Admin Dashboard")
+    users = load_users()
+    settings = load_settings()
+
+    # --- Delete User ---
+    with st.expander("❌ Delete User"):
+        target = st.selectbox("Select user to delete", [u for u in users.keys() if u != "admin"])
+        if st.button("Delete User"):
+            del users[target]
+            save_users(users)
+            log_event("ADMIN", "DELETE_USER", target)
+            st.success(f"User '{target}' deleted")
+
+    # --- Lock/Unlock User ---
+    with st.expander("🔒 Lock/Unlock User"):
+        target_user = st.selectbox("Select user", [u for u in users.keys() if u != "admin"], key="lock_user")
+        if target_user:
+            locked_status = users[target_user].get("locked", False)
+            st.write(f"Current Status: {'🔒 Locked' if locked_status else '✅ Active'}")
+
+            if not locked_status:
+                if st.button("Lock Account"):
+                    users[target_user]["locked"] = True
+                    users[target_user]["lock_time"] = datetime.now().isoformat()
+                    save_users(users)
+                    log_event("ADMIN", "LOCK_ACCOUNT", target_user)
+                    st.success(f"User '{target_user}' locked")
+            else:
+                if st.button("Unlock Account"):
+                    users[target_user]["locked"] = False
+                    users[target_user]["failed_attempts"] = 0
+                    users[target_user]["lock_time"] = None
+                    save_users(users)
+                    log_event("ADMIN", "UNLOCK_ACCOUNT", target_user)
+                    st.success(f"User '{target_user}' unlocked")
+
+    # --- Lock Duration & Enable/Disable ---
+    with st.expander("⏳ Lockout Settings"):
+        lock_minutes = st.number_input("Lock duration (minutes)", min_value=1, max_value=180,
+                                       value=settings.get("lock_minutes", 15))
+        lock_enabled = st.checkbox("Enable Auto Lockout", value=settings.get("lock_enabled", True))
+        if st.button("Update Lock Settings"):
+            settings["lock_minutes"] = lock_minutes
+            settings["lock_enabled"] = lock_enabled
+            save_settings(settings)
+            status = "enabled" if lock_enabled else "disabled"
+            log_event("ADMIN", "LOCKOUT_TOGGLE", f"Auto lockout {status}")
+            st.success(f"Lockout system {status}, duration {lock_minutes} minutes")
 
 # ===============================
-# Authentication Flow
+# Vehicle Counter App
 # ===============================
+def vehicle_counter_app():
+    st.title("🚗 Intersection Vehicle Counter")
+    st.caption(f"Welcome, **{st.session_state['user']}**! Detecting crossings and showing live **East / West / North / South** stats.")
+
+    # -------------------------------
+    # Model Setup
+    # -------------------------------
+    URLS = {
+        "weights": "https://github.com/AlexeyAB/darknet/releases/download/darknet_yolo_v4_pre/yolov4-tiny.weights",
+        "cfg": "https://raw.githubusercontent.com/AlexeyAB/darknet/master/cfg/yolov4-tiny.cfg",
+        "names": "https://raw.githubusercontent.com/pjreddie/darknet/master/data/coco.names",
+    }
+    FILES = {
+        "weights": os.path.join(MODEL_DIR, "yolov4-tiny.weights"),
+        "cfg": os.path.join(MODEL_DIR, "yolov4-tiny.cfg"),
+        "names": os.path.join(MODEL_DIR, "coco.names"),
+    }
+    for k, path in FILES.items():
+        if not os.path.exists(path):
+            st.info(f"Downloading {k}...")
+            urllib.request.urlretrieve(URLS[k], path)
+
+    with open(FILES["names"], "r") as f:
+        CLASSES = [c.strip() for c in f.readlines()]
+    DETECTABLE_CLASSES = {"person", "car", "bus", "truck", "motorbike", "bicycle"}
+
+    net = cv2.dnn.readNetFromDarknet(FILES["cfg"], FILES["weights"])
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+    layer_names = net.getLayerNames()
+    try:
+        output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
+    except:
+        output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
+
+    # -------------------------------
+    # Tracker Classes
+    # -------------------------------
+    class Track:
+        def __init__(self, track_id, centroid):
+            self.id = track_id
+            self.trace = deque(maxlen=20)
+            self.trace.append(centroid)
+            self.counted_crossings = {"h": False, "v": False}
+            self.cls = None
+            self.last_seen = time.time()
+
+    class CentroidTracker:
+        def __init__(self, max_distance=60, max_age=2.0):
+            self.next_id = 1
+            self.tracks = {}
+            self.max_distance = max_distance
+            self.max_age = max_age
+        @staticmethod
+        def _euclidean(a, b): return math.hypot(a[0]-b[0], a[1]-b[1])
+        def update(self, detections):
+            if detections is None: return {}
+            now = time.time()
+            # remove stale tracks
+            to_del = [tid for tid, t in self.tracks.items() if (now - t.last_seen) > self.max_age]
+            for tid in to_del:
+                try:
+                    del self.tracks[tid]
+                except KeyError:
+                    pass
+            assigned, out = set(), {}
+            for det in detections:
+                dcx, dcy, w, h, cname, conf = det
+                best_id, best_dist = None, 1e9
+                for tid, tr in self.tracks.items():
+                    if tid in assigned: continue
+                    dist = self._euclidean((dcx,dcy), tr.trace[-1])
+                    if dist < best_dist:
+                        best_dist, best_id = dist, tid
+                if best_id is not None and best_dist <= self.max_distance:
+                    tr = self.tracks[best_id]
+                    tr.trace.append((dcx,dcy))
+                    tr.last_seen = now
+                    if tr.cls is None: tr.cls = cname
+                    assigned.add(best_id)
+                    out[best_id] = (dcx,dcy,w,h,tr.cls or cname,conf)
+                else:
+                    tid = self.next_id; self.next_id += 1
+                    tr = Track(tid,(dcx,dcy)); tr.cls=cname; tr.last_seen=now
+                    self.tracks[tid] = tr; assigned.add(tid)
+                    out[tid] = (dcx,dcy,w,h,cname,conf)
+            return out
+
+    # -------------------------------
+    # Detection Function
+    # -------------------------------
+    def detect_objects(frame, conf_thresh=0.2, nms_thresh=0.4, target_classes=None, input_size=416):
+        h, w = frame.shape[:2]
+        blob = cv2.dnn.blobFromImage(frame, 1/255.0, (input_size,input_size), swapRB=True, crop=False)
+        net.setInput(blob)
+        try:
+            outs = net.forward(output_layers)
+        except cv2.error as e:
+            st.error(f"Forward pass error: {e}")
+            return []
+        boxes, confs, class_ids = [], [], []
+        for out in outs:
+            for det in out:
+                scores = det[5:]
+                class_id = int(np.argmax(scores))
+                confidence = float(scores[class_id]) if len(scores) > 0 else 0.0
+                if confidence > conf_thresh:
+                    cx=int(det[0]*w); cy=int(det[1]*h)
+                    bw=int(det[2]*w); bh=int(det[3]*h)
+                    x=int(cx-bw/2); y=int(cy-bh/2)
+                    cname = CLASSES[class_id] if class_id < len(CLASSES) else str(class_id)
+                    if target_classes and cname not in target_classes: continue
+                    boxes.append([x,y,bw,bh]); confs.append(float(confidence)); class_ids.append(class_id)
+        if len(boxes) == 0:
+            return []
+        idxs = cv2.dnn.NMSBoxes(boxes, confs, conf_thresh, nms_thresh)
+        detections = []
+        if len(idxs) > 0:
+            for i in idxs.flatten():
+                x,y,bw,bh = boxes[i]
+                cx=x+bw//2; cy=y+bh//2
+                cname = CLASSES[class_ids[i]] if class_ids[i] < len(CLASSES) else str(class_ids[i])
+                detections.append((cx,cy,bw,bh,cname,confs[i]))
+        return detections
+
+    st.info("✅ Vehicle counter loaded. You can now add video source, tracking, and dashboard UI here.")
+
+# ===============================
+# Main Flow
+# ===============================
+st.set_page_config(page_title="Vehicle Counter + Auth", layout="wide")
+
 if not st.session_state["logged_in"]:
     st.sidebar.title("Authentication")
-    menu = st.sidebar.radio("Choose", ["Login", "Register", "Reset Password"])
-    if menu == "Login":
+    choice = st.sidebar.radio("Choose", ["Login", "Register", "Reset Password"])
+    if choice == "Login":
         login_page()
-    elif menu == "Register":
+    elif choice == "Register":
         register_page()
-    elif menu == "Reset Password":
+    elif choice == "Reset Password":
         reset_password_page()
     st.stop()
 else:
     logout_button()
+    if st.session_state["user"] == "admin":
+        admin_dashboard()
+    else:
+        vehicle_counter_app()
+
 
 # ===============================
 # 🚗 Main Vehicle Counter App
