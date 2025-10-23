@@ -28,25 +28,61 @@ DB_FILE = "users.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    # Create users table with is_admin column (if not exists)
     c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
             email TEXT UNIQUE,
             password TEXT NOT NULL,
             created_at TEXT,
-            last_login TEXT
+            last_login TEXT,
+            is_admin INTEGER DEFAULT 0
+        )
+    """)
+    # Create activity log table
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            action TEXT,
+            timestamp TEXT
         )
     """)
     conn.commit()
+
+    # Ensure is_admin column exists for older DBs (defensive)
+    # Check pragma and add column if missing (SQLite allows ADD COLUMN)
+    try:
+        cols = [row[1] for row in c.execute("PRAGMA table_info(users)").fetchall()]
+        if "is_admin" not in cols:
+            c.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
+            conn.commit()
+    except Exception:
+        pass
+
+    # Create a default admin if none exists
+    try:
+        c.execute("SELECT username FROM users WHERE is_admin=1 LIMIT 1")
+        if not c.fetchone():
+            default_admin_pass = hash_password("admin123")
+            try:
+                c.execute("INSERT OR IGNORE INTO users (username, email, password, created_at, last_login, is_admin) VALUES (?,?,?,?,?,?)",
+                          ("admin", "admin@example.com", default_admin_pass, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), None, 1))
+                conn.commit()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     conn.close()
 
-def add_user(username, email, password_hash):
+def add_user(username, email, password_hash, is_admin=0):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     try:
-        c.execute("INSERT INTO users VALUES (?,?,?,?,?)",
+        c.execute("INSERT INTO users (username, email, password, created_at, last_login, is_admin) VALUES (?,?,?,?,?,?)",
                   (username, email, password_hash,
-                   datetime.now().strftime("%Y-%m-%d %H:%M:%S"), None))
+                   datetime.now().strftime("%Y-%m-%d %H:%M:%S"), None, is_admin))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -57,7 +93,7 @@ def add_user(username, email, password_hash):
 def get_user(username):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE username=?", (username,))
+    c.execute("SELECT username, email, password, created_at, last_login, is_admin FROM users WHERE username=?", (username,))
     row = c.fetchone()
     conn.close()
     return row
@@ -77,6 +113,14 @@ def update_last_login(username):
     conn.commit()
     conn.close()
 
+def log_activity(username, action):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT INTO activity_log (username, action, timestamp) VALUES (?, ?, ?)",
+              (username, action, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit()
+    conn.close()
+
 # Initialize DB
 init_db()
 
@@ -87,6 +131,8 @@ if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 if "user" not in st.session_state:
     st.session_state["user"] = None
+if "is_admin" not in st.session_state:
+    st.session_state["is_admin"] = False
 
 # ===============================
 # Authentication Pages
@@ -100,7 +146,9 @@ def login_page():
         if user and user[2] == hash_password(password):  # user[2] = password
             st.session_state["logged_in"] = True
             st.session_state["user"] = username
+            st.session_state["is_admin"] = bool(user[5])
             update_last_login(username)
+            log_activity(username, "Logged in")
             st.success(f"Welcome back, {username}!")
             st.rerun()
         else:
@@ -122,9 +170,10 @@ def register_page():
             st.warning("Password must be at least 4 characters")
         else:
             password_hash = hash_password(password)
-            success = add_user(username, email, password_hash)
+            success = add_user(username, email, password_hash, is_admin=0)
             if success:
                 st.success("✅ Account created! You can now log in.")
+                log_activity(username, "Registered account")
             else:
                 st.error("⚠️ Username or email already exists")
 
@@ -142,12 +191,16 @@ def reset_password_page():
             st.error("Passwords do not match")
         else:
             update_password(username, hash_password(new_password))
+            log_activity(st.session_state.get("user") or username, f"Password reset for {username}")
             st.success("✅ Password updated successfully! Please log in.")
 
 def logout_button():
     if st.sidebar.button("🚪 Logout"):
+        if st.session_state.get("user"):
+            log_activity(st.session_state["user"], "Logged out")
         st.session_state["logged_in"] = False
         st.session_state["user"] = None
+        st.session_state["is_admin"] = False
         st.rerun()
 
 # ===============================
@@ -189,8 +242,17 @@ if not st.session_state["logged_in"]:
 else:
     logout_button()
 
+# If logged in and admin, show admin nav in sidebar
+if st.session_state.get("is_admin"):
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("Admin")
+        admin_page_nav = st.radio("Admin Pages", ["Admin Dashboard", "User Manager", "Activity Logs"], index=0)
+else:
+    admin_page_nav = None
+
 # ===============================
-# 🚗 Main Vehicle Counter App
+# 🚗 Main Vehicle Counter App (unchanged)
 # ===============================
 st.title("🚗 Intersection Vehicle Counter")
 st.caption(f"Welcome, **{st.session_state['user']}**! Detecting crossings and showing live **East / West / North / South** stats.")
@@ -354,6 +416,111 @@ else:
 start_btn = st.button("▶️ Start")
 
 # -------------------------------
+# Admin Dashboard & Tools
+# -------------------------------
+def admin_dashboard():
+    st.title("🛠️ Admin Dashboard")
+    conn = sqlite3.connect(DB_FILE)
+
+    # Show users table
+    st.subheader("👥 Registered Users")
+    users_df = pd.read_sql_query("SELECT username, email, created_at, last_login, is_admin FROM users", conn)
+    st.dataframe(users_df, use_container_width=True)
+
+    # Download users CSV
+    csv_data = users_df.to_csv(index=False).encode()
+    st.download_button("📥 Download User List (CSV)", csv_data, "users.csv", "text/csv")
+
+    st.divider()
+
+    # Delete user
+    st.subheader("❌ Delete a User")
+    del_col1, del_col2 = st.columns([3,1])
+    with del_col1:
+        username_to_delete = st.text_input("Enter username to delete", key="admin_del_user")
+    with del_col2:
+        if st.button("Delete", use_container_width=True):
+            if not username_to_delete.strip():
+                st.warning("Enter a username")
+            elif username_to_delete == st.session_state["user"]:
+                st.error("You cannot delete your own account while logged in.")
+            else:
+                c = conn.cursor()
+                c.execute("DELETE FROM users WHERE username=?", (username_to_delete,))
+                if c.rowcount == 0:
+                    st.error(f"User '{username_to_delete}' not found.")
+                else:
+                    conn.commit()
+                    st.success(f"User '{username_to_delete}' deleted.")
+                    log_activity(st.session_state["user"], f"Deleted user '{username_to_delete}'")
+                    # refresh users_df
+                    users_df = pd.read_sql_query("SELECT username, email, created_at, last_login, is_admin FROM users", conn)
+                    st.experimental_rerun()
+
+    st.divider()
+
+    # Promote / Demote
+    st.subheader("🧩 Promote / Demote User")
+    role_col1, role_col2 = st.columns([3,2])
+    with role_col1:
+        username_role = st.text_input("Username to modify role", key="admin_role_user")
+    with role_col2:
+        role_action = st.selectbox("Action", ["Promote to Admin", "Demote to Regular User"])
+    if st.button("Apply Role Change"):
+        if not username_role.strip():
+            st.warning("Enter a username")
+        elif username_role == st.session_state["user"]:
+            st.warning("You cannot change your own role while logged in.")
+        else:
+            new_status = 1 if role_action == "Promote to Admin" else 0
+            c = conn.cursor()
+            c.execute("UPDATE users SET is_admin=? WHERE username=?", (new_status, username_role))
+            if c.rowcount == 0:
+                st.error(f"User '{username_role}' not found.")
+            else:
+                conn.commit()
+                st.success(f"{username_role} role updated.")
+                log_activity(st.session_state["user"], f"Changed role for '{username_role}' to {'Admin' if new_status else 'User'}")
+                st.experimental_rerun()
+
+    st.divider()
+
+    # Reset Password
+    st.subheader("🔑 Reset User Password")
+    rp_col1, rp_col2 = st.columns([3,2])
+    with rp_col1:
+        user_to_reset = st.text_input("Enter username to reset password", key="admin_reset_user")
+    with rp_col2:
+        new_pass = st.text_input("New password", type="password", key="admin_new_pass")
+    if st.button("Reset Password (Admin)"):
+        if not user_to_reset.strip() or not new_pass.strip():
+            st.warning("Fill both fields")
+        else:
+            hashed = hash_password(new_pass)
+            c = conn.cursor()
+            c.execute("UPDATE users SET password=? WHERE username=?", (hashed, user_to_reset))
+            if c.rowcount == 0:
+                st.error(f"User '{user_to_reset}' not found.")
+            else:
+                conn.commit()
+                st.success(f"Password for '{user_to_reset}' has been reset.")
+                log_activity(st.session_state["user"], f"Reset password for '{user_to_reset}'")
+
+    st.divider()
+
+    # Activity logs
+    st.subheader("📋 Activity Logs")
+    logs_df = pd.read_sql_query("SELECT * FROM activity_log ORDER BY id DESC LIMIT 500", conn)
+    if logs_df.empty:
+        st.info("No activity logs yet.")
+    else:
+        st.dataframe(logs_df, use_container_width=True)
+        csv_logs = logs_df.to_csv(index=False).encode()
+        st.download_button("📥 Download Logs (CSV)", csv_logs, "activity_logs.csv", "text/csv")
+
+    conn.close()
+
+# -------------------------------
 # Pie Chart Helper
 # -------------------------------
 def render_pie(labels, sizes, title):
@@ -365,7 +532,7 @@ def render_pie(labels, sizes, title):
     plt.close(fig)
 
 # -------------------------------
-# Main Loop
+# Main Loop (video processing)
 # -------------------------------
 if start_btn:
     if source=="Upload Video":
@@ -578,3 +745,18 @@ if start_btn:
 
 else:
     st.info("Upload a video or select webcam, then click **Start**.")
+
+# ===============================
+# Render admin UI if selected
+# ===============================
+# If admin nav was created, show the selected admin page
+if st.session_state.get("is_admin"):
+    # show admin dashboard UI below the main app or in a modal area
+    st.markdown("---")
+    st.header("Admin Controls")
+    if admin_page_nav == "Admin Dashboard":
+        admin_dashboard()
+    elif admin_page_nav == "User Manager":
+        admin_dashboard()  # same content for now
+    elif admin_page_nav == "Activity Logs":
+        admin_dashboard()  # same content for now
