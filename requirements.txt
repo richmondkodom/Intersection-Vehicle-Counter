@@ -5,4 +5,5 @@ pandas
 xlsxwriter
 Plotly
 matplotlib
+pip install streamlit pyrebase4 google-auth-oauthlib requests opencv-python-headless
 
