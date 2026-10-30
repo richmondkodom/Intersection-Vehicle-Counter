@@ -1,10 +1,5 @@
-streamlit
-opencv-python-headless
-numpy
-pandas
-xlsxwriter
-Plotly
-matplotlib
-pyrebase4 
-
-
+streamlit>=1.36,<2.0
+opencv-python-headless==4.10.0.84
+numpy<2.0
+pandas>=2.0
+matplotlib>=3.7
