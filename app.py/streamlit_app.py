@@ -14,6 +14,9 @@ import sqlite3
 from datetime import datetime
 import json
 
+# Configure Streamlit before displaying any UI elements.
+st.set_page_config(page_title="🚗 Intersection Vehicle Counter", layout="wide")
+
 # ===============================
 # Password Hashing
 # ===============================
@@ -206,7 +209,6 @@ def logout_button():
 # ===============================
 # App setup & style
 # ===============================
-st.set_page_config(page_title="🚗 Intersection Vehicle Counter", layout="wide")
 page_bg = """
 <style>
 [data-testid="stAppViewContainer"] { background-color: #f8fafc; }
@@ -283,14 +285,30 @@ with open(FILES["names"], "r") as f:
     CLASSES = [c.strip() for c in f.readlines()]
 DETECTABLE_CLASSES = {"person", "car", "bus", "truck", "motorbike", "bicycle"}
 
-net = cv2.dnn.readNetFromDarknet(FILES["cfg"], FILES["weights"])
-net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-layer_names = net.getLayerNames()
+# Load the YOLOv4-tiny network. Some OpenCV builds expose readNetFromDarknet,
+# while others expose the more general readNet() API.
 try:
-    output_layers = [layer_names[i - 1] for i in net.getUnconnectedOutLayers().flatten()]
-except:
-    output_layers = [layer_names[i[0] - 1] for i in net.getUnconnectedOutLayers()]
+    if hasattr(cv2.dnn, "readNetFromDarknet"):
+        net = cv2.dnn.readNetFromDarknet(FILES["cfg"], FILES["weights"])
+    else:
+        net = cv2.dnn.readNet(FILES["weights"], FILES["cfg"])
+
+    net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+    net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+
+    layer_names = net.getLayerNames()
+    unconnected = net.getUnconnectedOutLayers()
+    unconnected = np.asarray(unconnected).reshape(-1)
+    output_layers = [layer_names[int(i) - 1] for i in unconnected]
+    if not output_layers:
+        raise RuntimeError("OpenCV did not return any YOLO output layers.")
+except Exception as e:
+    st.error(
+        "Could not load the YOLO model. Check that OpenCV is installed correctly "
+        "and that yolov4-tiny.cfg and yolov4-tiny.weights downloaded successfully."
+    )
+    st.exception(e)
+    st.stop()
 
 # -------------------------------
 # Tracker
@@ -589,12 +607,14 @@ if start_btn:
                 if show_trace and len(tr.trace)>=2:
                     for i in range(1,len(tr.trace)):
                         cv2.line(frame, tr.trace[i-1], tr.trace[i], (200,200,200), 2)
+                x = int(cx - bw / 2)
+                y = int(cy - bh / 2)
                 if draw_boxes:
-                    x=int(cx-bw/2); y=int(cy-bh/2)
-                    cv2.rectangle(frame,(x,y),(x+bw,y+bh),(76,175,80),2)
-                label=f"{cname} {int(conf*100)}%"
-                if show_ids: label=f"ID {tid} | "+label
-                cv2.putText(frame,label,(int(cx-bw/2),max(10,int(y-8))),
+                    cv2.rectangle(frame, (x, y), (x + bw, y + bh), (76, 175, 80), 2)
+                label = f"{cname} {int(conf * 100)}%"
+                if show_ids:
+                    label = f"ID {tid} | " + label
+                cv2.putText(frame, label, (x, max(10, y - 8)),
                             cv2.FONT_HERSHEY_SIMPLEX,0.6,(10,220,10),2)
 
                 # Crossing checks
