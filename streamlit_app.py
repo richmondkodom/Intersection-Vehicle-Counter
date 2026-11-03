@@ -428,7 +428,12 @@ with st.sidebar:
 uploaded_video = None
 cap = None
 if source == "Upload Video":
-    uploaded_video = st.file_uploader("Upload a video", type=["mp4","mov","avi","mkv"])
+    st.caption("Large uploads: configure Streamlit with .streamlit/config.toml. A 10 GB limit also depends on your hosting provider.")
+    uploaded_video = st.file_uploader(
+        "Upload a video (up to 10 GB when supported by your host)",
+        type=["mp4", "mov", "avi", "mkv"],
+        help="For very large files, use a host with sufficient upload limits, disk space, RAM, and processing time."
+    )
 else:
     cam_index = st.number_input("Webcam index", value=0, step=1, min_value=0)
 start_btn = st.button("▶️ Start")
@@ -557,9 +562,26 @@ if start_btn:
         if uploaded_video is None:
             st.warning("Please upload a video first.")
             st.stop()
-        tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        tfile.write(uploaded_video.read())
-        tfile.flush()
+        # Copy the uploaded file to disk in chunks instead of making an additional
+        # full-size bytes copy with uploaded_video.read().
+        suffix = os.path.splitext(getattr(uploaded_video, "name", "video.mp4"))[1] or ".mp4"
+        tfile = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        try:
+            uploaded_video.seek(0)
+            chunk_size = 8 * 1024 * 1024  # 8 MB per disk-write chunk
+            while True:
+                chunk = uploaded_video.read(chunk_size)
+                if not chunk:
+                    break
+                tfile.write(chunk)
+            tfile.flush()
+        except Exception:
+            tfile.close()
+            try:
+                os.unlink(tfile.name)
+            except OSError:
+                pass
+            raise
         cap = cv2.VideoCapture(tfile.name)
     else:
         cap = cv2.VideoCapture(int(cam_index))
