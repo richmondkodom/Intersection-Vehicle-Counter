@@ -1,0 +1,1 @@
+[server]\nmaxUploadSize = 10240\nmaxMessageSize = 10240\n
