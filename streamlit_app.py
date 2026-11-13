@@ -601,14 +601,22 @@ if start_btn:
         "Reporting interval (minutes)", min_value=1, max_value=120, value=15, step=1
     )
     interval_seconds = int(interval_minutes * 60)
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
-    if not math.isfinite(fps) or fps <= 0:
-        fps = 25.0
+    video_fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
+    if not math.isfinite(video_fps) or video_fps <= 0:
+        video_fps = 25.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    video_duration = total_frames / fps if total_frames > 0 else None
+    video_duration = total_frames / video_fps if total_frames > 0 else None
 
     tracker = CentroidTracker(max_distance=max_distance, max_age=max_age)
     fps_time = time.time(); frame_idx = 0
+    processing_fps = 0.0
+    # Streamlit Cloud is resource constrained: avoid a browser/UI update on every frame.
+    PREVIEW_EVERY = 12
+    UI_UPDATE_EVERY = 120
+    CHART_UPDATE_EVERY = 600
+    processing_error = None
+    progress_bar = st.progress(0, text="Preparing video processing...")
+    processing_status = st.empty()
 
     direction_counts = {"left_to_right":0,"right_to_left":0,"up_to_down":0,"down_to_up":0}
     class_totals = {cls:0 for cls in selected_classes}
@@ -629,7 +637,7 @@ if start_btn:
             if not ret:
                 break
             frame_idx += 1
-            video_seconds = (frame_idx - 1) / fps
+            video_seconds = (frame_idx - 1) / video_fps
             segment_index = int(video_seconds // interval_seconds)
             if segment_index not in interval_data:
                 start_seconds = segment_index * interval_seconds
@@ -754,85 +762,64 @@ if start_btn:
                 history["South"].append(direction_counts["up_to_down"])
                 history["North"].append(direction_counts["down_to_up"])
 
-            # FPS
+            # Update the preview and Streamlit widgets periodically, not on every frame.
+            now = time.time()
+            processing_fps = 1.0 / max(1e-6, now - fps_time)
+            fps_time = now
             if fps_display:
-                now = time.time()
-                fps = 1.0 / max(1e-6, now - fps_time)
-                fps_time = now
-                cv2.putText(frame, f"FPS: {fps:.1f}", (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (50,180,255), 2)
+                cv2.putText(frame, f"Processing FPS: {processing_fps:.1f}", (10, 24),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (50,180,255), 2)
 
-            # Show frame in Streamlit
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            video_holder.image(frame_rgb, channels="RGB", use_container_width=True)
+            if frame_idx == 1 or frame_idx % PREVIEW_EVERY == 0:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                video_holder.image(frame_rgb, channels="RGB", use_container_width=True)
 
-            # Sidebar stats
-            total_moves = sum(direction_counts.values())
-            sidebar_stats.markdown(
-                f"""
-                ### Live Totals
-                - **Total crossings:** {total_moves}
-                - **East (L→R):** {direction_counts['left_to_right']}
-                - **West (R→L):** {direction_counts['right_to_left']}
-                - **South (U→D):** {direction_counts['up_to_down']}
-                - **North (D→U):** {direction_counts['down_to_up']}
-                """
-            )
+            if frame_idx == 1 or frame_idx % UI_UPDATE_EVERY == 0:
+                total_moves = sum(direction_counts.values())
+                sidebar_stats.markdown(
+                    f"### Live Totals\n"
+                    f"- **Total crossings:** {total_moves}\n"
+                    f"- **East (L→R):** {direction_counts['left_to_right']}\n"
+                    f"- **West (R→L):** {direction_counts['right_to_left']}\n"
+                    f"- **South (U→D):** {direction_counts['up_to_down']}\n"
+                    f"- **North (D→U):** {direction_counts['down_to_up']}"
+                )
+                if total_frames > 0:
+                    pct = min(100, int(frame_idx * 100 / total_frames))
+                    progress_bar.progress(pct, text=f"Processed {frame_idx:,} of {total_frames:,} frames ({pct}%)")
+                processing_status.caption(
+                    f"Frame {frame_idx:,}" + (f" / {total_frames:,}" if total_frames else "") +
+                    f" · Video time {format_video_time(video_seconds)} · {processing_fps:.1f} processing FPS"
+                )
 
-            # Dashboard
-            with dashboard_placeholder.container():
-                st.subheader("📊 Live Movement Dashboard")
-                c1,c2,c3,c4 = st.columns(4)
-                c1.metric("➡️ East", direction_counts["left_to_right"])
-                c2.metric("⬅️ West", direction_counts["right_to_left"])
-                c3.metric("⬇️ South", direction_counts["up_to_down"])
-                c4.metric("⬆️ North", direction_counts["down_to_up"])
-
-                if dashboard_view == "Bar View":
-                    a,b = st.columns(2)
-                    with a:
-                        st.bar_chart(pd.DataFrame.from_dict({"East":direction_counts["left_to_right"],
-                                                             "West":direction_counts["right_to_left"],
-                                                             "South":direction_counts["up_to_down"],
-                                                             "North":direction_counts["down_to_up"]},
-                                                            orient="index", columns=["Count"]))
-                    with b:
-                        if class_totals:
+            # Expensive chart rendering is deliberately much less frequent.
+            if frame_idx == 1 or frame_idx % CHART_UPDATE_EVERY == 0:
+                with dashboard_placeholder.container():
+                    st.subheader("📊 Live Movement Dashboard")
+                    c1,c2,c3,c4 = st.columns(4)
+                    c1.metric("➡️ East", direction_counts["left_to_right"])
+                    c2.metric("⬅️ West", direction_counts["right_to_left"])
+                    c3.metric("⬇️ South", direction_counts["up_to_down"])
+                    c4.metric("⬆️ North", direction_counts["down_to_up"])
+                    if dashboard_view in ("Bar View", "Combined View"):
+                        a,b = st.columns(2)
+                        with a:
+                            st.bar_chart(pd.DataFrame.from_dict({"East":direction_counts["left_to_right"],
+                                "West":direction_counts["right_to_left"], "South":direction_counts["up_to_down"],
+                                "North":direction_counts["down_to_up"]}, orient="index", columns=["Count"]))
+                        with b:
                             st.bar_chart(pd.DataFrame.from_dict(class_totals, orient="index", columns=["Count"]))
-                        else:
-                            st.write("No class counts yet.")
-                elif dashboard_view == "Line View":
-                    if len(history["frame"]) > 1:
-                        df_hist = pd.DataFrame(history).set_index("frame")
-                        st.line_chart(df_hist)
-                    else:
-                        st.info("Play longer to collect history for line chart.")
-                elif dashboard_view == "Combined View":
-                    a,b = st.columns(2)
-                    with a:
-                        st.bar_chart(pd.DataFrame.from_dict({"East":direction_counts["left_to_right"],
-                                                             "West":direction_counts["right_to_left"],
-                                                             "South":direction_counts["up_to_down"],
-                                                             "North":direction_counts["down_to_up"]},
-                                                            orient="index", columns=["Count"]))
-                        if len(history["frame"]) > 1:
-                            st.line_chart(pd.DataFrame(history).set_index("frame"))
-                    with b:
-                        if class_totals:
-                            st.bar_chart(pd.DataFrame.from_dict(class_totals, orient="index", columns=["Count"]))
-                        else:
-                            st.write("No class counts yet.")
-                        if show_pies:
-                            total = sum(direction_counts.values())
-                            if total > 0:
-                                render_pie(["East","West","South","North"],
-                                           [direction_counts["left_to_right"],
-                                            direction_counts["right_to_left"],
-                                            direction_counts["up_to_down"],
-                                            direction_counts["down_to_up"]],
-                                           "Direction %")
-                            if sum(class_totals.values()) > 0:
-                                render_pie(list(class_totals.keys()), list(class_totals.values()), "Class %")
+                    if dashboard_view in ("Line View", "Combined View") and len(history["frame"]) > 1:
+                        st.line_chart(pd.DataFrame(history).set_index("frame"))
+                    if show_pies and dashboard_view == "Combined View" and sum(direction_counts.values()) > 0:
+                        render_pie(["East","West","South","North"],
+                            [direction_counts["left_to_right"], direction_counts["right_to_left"],
+                             direction_counts["up_to_down"], direction_counts["down_to_up"]], "Direction %")
 
+    except Exception as e:
+        processing_error = e
+        st.error("Video processing stopped unexpectedly. Partial results are being prepared below.")
+        st.exception(e)
     finally:
         cap.release()
         # remove temp file if used
@@ -843,13 +830,17 @@ if start_btn:
         except Exception:
             pass
 
-    st.success("✅ Finished Processing")
-
-    # Complete 15-minute interval report, including empty intervals.
-    if video_duration is not None:
-        number_of_segments = max(1, int(math.ceil(video_duration / interval_seconds)))
+    if processing_error is None:
+        progress_bar.progress(100, text="Processing finished")
+        st.success("✅ Finished Processing")
     else:
-        number_of_segments = max(1, int(((max(0, frame_idx - 1) / fps) // interval_seconds)) + 1)
+        st.warning(f"Partial results: processing stopped at frame {frame_idx:,}. You can still download the results collected so far.")
+
+    # On an interrupted run, report only the portion actually processed.
+    processed_duration = (frame_idx / video_fps) if frame_idx else 0.0
+    report_duration = video_duration if processing_error is None and video_duration else processed_duration
+    # Complete 15-minute interval report, including empty intervals in the processed range.
+    number_of_segments = max(1, int(math.ceil(report_duration / interval_seconds)))
 
     interval_rows = []
     for seg in range(number_of_segments):
@@ -858,7 +849,7 @@ if start_btn:
             "East": 0, "West": 0, "North": 0, "South": 0,
             "Total Crossings": 0, "Vehicle Classes": {}
         })
-        end_seconds = min((seg + 1) * interval_seconds, video_duration) if video_duration else (seg + 1) * interval_seconds
+        end_seconds = min((seg + 1) * interval_seconds, report_duration)
         interval_rows.append({
             "Segment": seg + 1,
             "Video Period": f"{format_video_time(seg * interval_seconds)} - {format_video_time(end_seconds)}",
@@ -977,6 +968,9 @@ if start_btn:
     except Exception as pdf_error:
         st.warning(f"PDF export could not be created: {pdf_error}")
 
+    if processing_error is not None:
+        st.info("These files contain only the crossings detected before processing stopped. Re-run the video to obtain a complete report.")
+
     st.caption(
         "Important: East/West use left/right screen movement; North/South use up/down "
         "screen movement. Set the camera orientation and counting lines correctly. "
@@ -986,6 +980,7 @@ if start_btn:
 
 else:
     st.info("Upload a video or select webcam, then click **Start**.")
+    st.caption("Streamlit Community Cloud has limited CPU and memory. Very long videos may take substantially longer than their playback duration; for 30–60 minute videos, use a lower-resolution copy or process shorter sections if the service restarts.")
 
 # ===============================
 # Render admin UI if selected
