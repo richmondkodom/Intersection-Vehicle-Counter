@@ -543,6 +543,13 @@ def admin_dashboard():
 
     conn.close()
 
+def format_video_time(seconds):
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+
+
 # -------------------------------
 # Pie Chart Helper
 # -------------------------------
@@ -589,13 +596,28 @@ if start_btn:
         st.error("Could not open video source.")
         st.stop()
 
+    # Split the uploaded video's TIMELINE into consecutive reporting periods.
+    interval_minutes = st.sidebar.number_input(
+        "Reporting interval (minutes)", min_value=1, max_value=120, value=15, step=1
+    )
+    interval_seconds = int(interval_minutes * 60)
+    fps = float(cap.get(cv2.CAP_PROP_FPS) or 0)
+    if not math.isfinite(fps) or fps <= 0:
+        fps = 25.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    video_duration = total_frames / fps if total_frames > 0 else None
+
     tracker = CentroidTracker(max_distance=max_distance, max_age=max_age)
     fps_time = time.time(); frame_idx = 0
 
     direction_counts = {"left_to_right":0,"right_to_left":0,"up_to_down":0,"down_to_up":0}
     class_totals = {cls:0 for cls in selected_classes}
     events = []
+    interval_data = {}
+    unique_track_ids = set()
     history = {"frame":[], "East":[], "West":[], "South":[], "North":[]}
+    interval_live_placeholder = st.empty()
+    last_completed_segment = -1
 
     video_holder = st.empty()
     dashboard_placeholder = st.empty()
@@ -607,6 +629,38 @@ if start_btn:
             if not ret:
                 break
             frame_idx += 1
+            video_seconds = (frame_idx - 1) / fps
+            segment_index = int(video_seconds // interval_seconds)
+            if segment_index not in interval_data:
+                start_seconds = segment_index * interval_seconds
+                interval_data[segment_index] = {
+                    "Segment": segment_index + 1,
+                    "Start": start_seconds,
+                    "East": 0, "West": 0, "North": 0, "South": 0,
+                    "Total Crossings": 0,
+                    "Vehicle Classes": {}
+                }
+            interval_bucket = interval_data[segment_index]
+
+            # At the start of each new 15-minute block, publish the block just completed.
+            if segment_index > 0 and last_completed_segment < segment_index - 1:
+                completed = interval_data.get(segment_index - 1)
+                if completed is not None:
+                    interval_live_placeholder.markdown(
+                        f"""### ✅ Completed Segment {completed['Segment']}
+**Video period:** {format_video_time(completed['Start'])} – {format_video_time(completed['Start'] + interval_seconds)}
+
+| Direction | Crossings |
+|---|---:|
+| East | {completed['East']} |
+| West | {completed['West']} |
+| North | {completed['North']} |
+| South | {completed['South']} |
+| **Segment total** | **{completed['Total Crossings']}** |
+"""
+                    )
+                last_completed_segment = segment_index - 1
+
             h,w = frame.shape[:2]
             h_line_y = int(h*h_ratio)
             v_line_x = int(w*v_ratio)
@@ -650,10 +704,18 @@ if start_btn:
                         if (py < h_line_y <= cy) or (py > h_line_y >= cy):
                             if dy > 0:
                                 direction_counts["up_to_down"] += 1
-                                events.append((tid, "South", tr.cls or cname, frame_idx, event_time))
+                                events.append((tid, "South", tr.cls or cname, frame_idx, event_time, segment_index + 1, format_video_time(video_seconds)))
+                                interval_bucket["South"] += 1
+                                interval_bucket["Total Crossings"] += 1
+                                interval_bucket["Vehicle Classes"][tr.cls or cname] = interval_bucket["Vehicle Classes"].get(tr.cls or cname, 0) + 1
+                                unique_track_ids.add(tid)
                             else:
                                 direction_counts["down_to_up"] += 1
-                                events.append((tid, "North", tr.cls or cname, frame_idx, event_time))
+                                events.append((tid, "North", tr.cls or cname, frame_idx, event_time, segment_index + 1, format_video_time(video_seconds)))
+                                interval_bucket["North"] += 1
+                                interval_bucket["Total Crossings"] += 1
+                                interval_bucket["Vehicle Classes"][tr.cls or cname] = interval_bucket["Vehicle Classes"].get(tr.cls or cname, 0) + 1
+                                unique_track_ids.add(tid)
                             cls_name = tr.cls or cname
                             if cls_name in class_totals:
                                 class_totals[cls_name] += 1
@@ -665,10 +727,18 @@ if start_btn:
                         if (px < v_line_x <= cx) or (px > v_line_x >= cx):
                             if dx > 0:
                                 direction_counts["left_to_right"] += 1
-                                events.append((tid, "East", tr.cls or cname, frame_idx, event_time))
+                                events.append((tid, "East", tr.cls or cname, frame_idx, event_time, segment_index + 1, format_video_time(video_seconds)))
+                                interval_bucket["East"] += 1
+                                interval_bucket["Total Crossings"] += 1
+                                interval_bucket["Vehicle Classes"][tr.cls or cname] = interval_bucket["Vehicle Classes"].get(tr.cls or cname, 0) + 1
+                                unique_track_ids.add(tid)
                             else:
                                 direction_counts["right_to_left"] += 1
-                                events.append((tid, "West", tr.cls or cname, frame_idx, event_time))
+                                events.append((tid, "West", tr.cls or cname, frame_idx, event_time, segment_index + 1, format_video_time(video_seconds)))
+                                interval_bucket["West"] += 1
+                                interval_bucket["Total Crossings"] += 1
+                                interval_bucket["Vehicle Classes"][tr.cls or cname] = interval_bucket["Vehicle Classes"].get(tr.cls or cname, 0) + 1
+                                unique_track_ids.add(tid)
                             cls_name = tr.cls or cname
                             if cls_name in class_totals:
                                 class_totals[cls_name] += 1
@@ -775,15 +845,144 @@ if start_btn:
 
     st.success("✅ Finished Processing")
 
-    # Summary & CSV
-    st.metric("Grand Total Crossings", sum(direction_counts.values()))
-    if events:
-        df = pd.DataFrame(events, columns=["track_id","direction","class","frame","timestamp"])
-        st.dataframe(df, use_container_width=True)
-        csv = df.to_csv(index=False).encode()
-        st.download_button("📥 Download CSV", csv, "counts.csv", "text/csv")
+    # Complete 15-minute interval report, including empty intervals.
+    if video_duration is not None:
+        number_of_segments = max(1, int(math.ceil(video_duration / interval_seconds)))
     else:
+        number_of_segments = max(1, int(((max(0, frame_idx - 1) / fps) // interval_seconds)) + 1)
+
+    interval_rows = []
+    for seg in range(number_of_segments):
+        item = interval_data.get(seg, {
+            "Segment": seg + 1, "Start": seg * interval_seconds,
+            "East": 0, "West": 0, "North": 0, "South": 0,
+            "Total Crossings": 0, "Vehicle Classes": {}
+        })
+        end_seconds = min((seg + 1) * interval_seconds, video_duration) if video_duration else (seg + 1) * interval_seconds
+        interval_rows.append({
+            "Segment": seg + 1,
+            "Video Period": f"{format_video_time(seg * interval_seconds)} - {format_video_time(end_seconds)}",
+            "East": item["East"], "West": item["West"],
+            "North": item["North"], "South": item["South"],
+            "Total Crossings": item["Total Crossings"],
+            "Vehicle Classes": json.dumps(item["Vehicle Classes"])
+        })
+
+    interval_df = pd.DataFrame(interval_rows)
+    st.subheader("⏱️ Results for Each 15-Minute Period")
+    st.dataframe(interval_df, use_container_width=True, hide_index=True)
+
+    grand_total = sum(direction_counts.values())
+    st.subheader("🏁 Grand Total — Entire Video")
+    a, b, c, d, e = st.columns(5)
+    a.metric("Grand Total", grand_total)
+    b.metric("East", direction_counts["left_to_right"])
+    c.metric("West", direction_counts["right_to_left"])
+    d.metric("North", direction_counts["down_to_up"])
+    e.metric("South", direction_counts["up_to_down"])
+
+    st.subheader("📊 Grand Total by Direction")
+    direction_df = pd.DataFrame({
+        "Direction": ["East", "West", "North", "South"],
+        "Crossings": [direction_counts["left_to_right"], direction_counts["right_to_left"],
+                      direction_counts["down_to_up"], direction_counts["up_to_down"]]
+    })
+    st.bar_chart(direction_df.set_index("Direction"))
+
+    st.subheader("🚘 Vehicle Class Totals")
+    st.dataframe(pd.DataFrame(
+        [{"Vehicle Class": k, "Total Crossings": v} for k, v in class_totals.items()]
+    ), use_container_width=True, hide_index=True)
+
+    if events:
+        df = pd.DataFrame(events, columns=[
+            "track_id", "direction", "class", "frame", "timestamp", "segment", "video_time"
+        ])
+        st.subheader("🧾 Detailed Crossing Records")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "📥 Download Detailed Events (CSV)",
+            df.to_csv(index=False).encode("utf-8"),
+            "vehicle_crossing_events.csv", "text/csv"
+        )
+    else:
+        df = pd.DataFrame(columns=["track_id", "direction", "class", "frame", "timestamp", "segment", "video_time"])
         st.info("No crossing events detected.")
+
+    st.download_button(
+        "📥 Download 15-Minute Summary (CSV)",
+        interval_df.to_csv(index=False).encode("utf-8"),
+        "vehicle_15_minute_summary.csv", "text/csv"
+    )
+
+    try:
+        import io
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+            interval_df.to_excel(writer, sheet_name="15-Minute Summary", index=False)
+            direction_df.to_excel(writer, sheet_name="Grand Totals", index=False)
+            df.to_excel(writer, sheet_name="Crossing Events", index=False)
+        st.download_button(
+            "📥 Download Complete Excel Report", excel_buffer.getvalue(),
+            "intersection_vehicle_report.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as export_error:
+        st.warning(f"Excel export needs openpyxl in requirements.txt: {export_error}")
+
+    # PDF summary export using Matplotlib (no extra PDF package required).
+    try:
+        import io
+        from matplotlib.backends.backend_pdf import PdfPages
+        pdf_buffer = io.BytesIO()
+        with PdfPages(pdf_buffer) as pdf:
+            fig, ax = plt.subplots(figsize=(11.7, 8.3))
+            ax.axis("off")
+            ax.set_title("Intersection Vehicle Counter - Grand Total Report", fontsize=16, pad=20)
+            total_table = [
+                ["Direction", "Crossings"],
+                ["East", direction_counts["left_to_right"]],
+                ["West", direction_counts["right_to_left"]],
+                ["North", direction_counts["down_to_up"]],
+                ["South", direction_counts["up_to_down"]],
+                ["GRAND TOTAL", grand_total],
+            ]
+            table = ax.table(cellText=total_table[1:], colLabels=total_table[0],
+                             loc="center", cellLoc="center")
+            table.auto_set_font_size(False)
+            table.set_fontsize(11)
+            table.scale(1, 1.7)
+            pdf.savefig(fig, bbox_inches="tight")
+            plt.close(fig)
+
+            # Break the interval report into readable pages.
+            rows_per_page = 22
+            for start_row in range(0, len(interval_df), rows_per_page):
+                page_df = interval_df.iloc[start_row:start_row + rows_per_page]
+                fig, ax = plt.subplots(figsize=(11.7, 8.3))
+                ax.axis("off")
+                ax.set_title("15-Minute Interval Results", fontsize=15, pad=18)
+                table = ax.table(cellText=page_df.values, colLabels=page_df.columns,
+                                 loc="center", cellLoc="center")
+                table.auto_set_font_size(False)
+                table.set_fontsize(8)
+                table.scale(1, 1.4)
+                pdf.savefig(fig, bbox_inches="tight")
+                plt.close(fig)
+
+        st.download_button(
+            "📄 Download PDF Summary Report", pdf_buffer.getvalue(),
+            "intersection_vehicle_report.pdf", "application/pdf"
+        )
+    except Exception as pdf_error:
+        st.warning(f"PDF export could not be created: {pdf_error}")
+
+    st.caption(
+        "Important: East/West use left/right screen movement; North/South use up/down "
+        "screen movement. Set the camera orientation and counting lines correctly. "
+        "Grand Total is crossing events: a vehicle that crosses both lines may be counted "
+        "once on each axis."
+    )
 
 else:
     st.info("Upload a video or select webcam, then click **Start**.")
